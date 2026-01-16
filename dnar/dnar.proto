@@ -1,0 +1,99 @@
+syntax = "proto3";
+
+package dnar;
+
+option go_package = "github.com/adisbladis/deltanar/dnar";
+
+// Protocol specification for the DeltaNAR format
+//
+// The DeltaNAR protocol:
+// 1. A StreamHeader(len(nar))
+// 2. Multiple NAR
+// 3. A StreamHeader(len(caChunks))
+// 4. Multiple CAChunk
+// 5. A PathTrailer
+
+// Sent before a stream of other messages indicating how many messages will follow
+message StreamHeader {
+    uint64 length = 1;
+}
+
+// A file being used as an input to write another file
+message FileDescriptor {
+    uint32 store_path = 1; // Store path offset in DnarHeader.paths
+    string path = 2;
+}
+
+// A content addressed chunk
+message CAChunk {
+    bytes data = 1;
+}
+
+// A file within a NAR
+message NarFile {
+    string path = 1;
+
+    message ChunkDescriptor {
+        oneof chunk_type {
+            // Read from CA chunk
+            CAChunk ca = 1;
+            // Read from file descriptor
+            FDChunk fd = 2;
+            // Inline data (for very short data)
+            InlineChunk inline = 3;
+        }
+
+        message CAChunk {
+            uint64 index = 1; // CA chunk index in chunk stream to read from
+        }
+
+        message FDChunk {
+            uint64 index = 1; // File descriptor index in DnarHeader.files to read from
+            uint64 size = 2;
+            uint64 offset = 3;
+            bytes digest = 4; // Chunk digest (verify that existing store contents match)
+        }
+
+        message InlineChunk {
+            bytes data = 1;
+        }
+    }
+
+    oneof file_type {
+        RegularFile regular = 2;
+        DirectoryFile directory = 3;
+        SymlinkFile symlink = 4;
+    }
+
+    message RegularFile {
+        uint64 size = 1;
+        repeated ChunkDescriptor chunks = 2;
+        bool executable = 3;
+    }
+
+    message DirectoryFile {
+        bool executable = 1;
+    }
+
+    message SymlinkFile {
+        string target = 1;
+    }
+}
+
+// Top level file header
+message PathTrailer {
+    repeated string paths = 1;
+    repeated FileDescriptor files = 2;
+}
+
+// NAR
+message NAR {
+  // Core data fields
+  string path = 1;
+  repeated NarFile files = 2;
+
+  // Narinfo metadata (extracted from local store using nix path-info --json)
+  string narHash = 3;
+  uint64 narSize = 4;
+  repeated string references = 5;
+}

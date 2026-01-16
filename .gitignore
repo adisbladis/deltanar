@@ -1,0 +1,7 @@
+/dnar-pack
+/dnar-unpack
+/.dev
+/dnar.sqlite3
+/*.dnar*
+/dev
+/result
