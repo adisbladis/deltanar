@@ -1,6 +1,14 @@
 # Installation
 
-DeltaNAR is
+For closure size reasons DeltaNAR is distributed as 2 separate Nix packages:
+
+- The packing program
+
+This has a relatively larger set of dependencies & is not optimised for closure size.
+
+- The unpacking program
+
+Optimised for closure size & has as small of a dependency set as possible.
 
 ## Flakes
 ``` nix
