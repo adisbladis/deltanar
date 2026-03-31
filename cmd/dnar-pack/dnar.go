@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"slices"
+	"strings"
 
 	"google.golang.org/protobuf/encoding/protodelim"
 
@@ -103,17 +104,31 @@ func writeDNAR(ctx context.Context, writer io.Writer, queries *database.Queries,
 
 		nar := &dnar.NAR{
 			Path:       storePath,
-			Files:      make([]*dnar.NarFile, len(storeFiles)),
+			Files:      []*dnar.NarFile{},
 			NarHash:    pathInfo.NarHash,
 			NarSize:    pathInfo.NarSize,
 			References: pathInfo.References,
 		}
 
-		for i, storeFile := range storeFiles {
+		// If a directory was matched in-full we can skip writing the individual files
+		//  from it to the delta.
+		//
+		// Maintain a list of directories which are already copied in-full so the files from it can be skipped.
+		recursiveDirs := []string{}
+
+	STOREFILE_LOOP:
+		for _, storeFile := range storeFiles {
+			for _, recursiveDir := range recursiveDirs {
+				if strings.HasPrefix(storeFile.Path, recursiveDir) {
+					continue STOREFILE_LOOP
+				}
+			}
+
 			file := &dnar.NarFile{
 				Path: storeFile.Path,
 			}
-			nar.Files[i] = file
+
+			nar.Files = append(nar.Files, file)
 
 			switch storeFile.Type {
 			case store.TypeRegular:
@@ -182,9 +197,19 @@ func writeDNAR(ctx context.Context, writer io.Writer, queries *database.Queries,
 					}
 				}
 			case store.TypeDirectory: // WriteDirOp
+				var from int64 = -1
+
+				// Check for exact dir hash match
+				existingDirs, ok := localStoreFilesByDigest[string(storeFile.Hash)]
+				if ok {
+					recursiveDirs = append(recursiveDirs, storeFile.Path)
+					existingDir := existingDirs[0]
+					from = int64(addInputStoreFile(existingDir))
+				}
+
 				file.FileType = &dnar.NarFile_Directory{
 					Directory: &dnar.NarFile_DirectoryFile{
-						Executable: storeFile.Executable,
+						From: from,
 					},
 				}
 

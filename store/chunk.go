@@ -156,16 +156,13 @@ func ChunkFile(path string) (*ChunkedFile, error) {
 }
 
 func ReadStorePath(ctx context.Context, storePath string) ([]*StoreFile, error) {
-	files := []*StoreFile{}
-
-	err := filepath.WalkDir(storePath, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
+	var readPath func(string) ([]*StoreFile, error)
+	readPath = func(path string) ([]*StoreFile, error) {
+		files := []*StoreFile{}
 
 		info, err := os.Lstat(path)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		mode := info.Mode()
@@ -175,30 +172,66 @@ func ReadStorePath(ctx context.Context, storePath string) ([]*StoreFile, error) 
 
 		var chunks []*FileChunk
 		var digest []byte
+		var dirStoreFiles []*StoreFile
 
 		switch mode.Type() {
 		case fs.ModeSymlink:
 			fileType = TypeSymlink
 			linkTarget, err = os.Readlink(path)
 			if err != nil {
-				return fmt.Errorf("error reading symlink target: %w", err)
+				return nil, fmt.Errorf("error reading symlink target: %w", err)
 			}
 
 		case fs.ModeDir:
 			fileType = TypeDirectory
+
+			entries, err := os.ReadDir(path)
+			if err != nil {
+				return nil, err
+			}
+
+			for _, entry := range entries {
+				ss, err := readPath(filepath.Join(path, entry.Name()))
+				if err != nil {
+					return nil, err
+				}
+				dirStoreFiles = append(dirStoreFiles, ss...)
+			}
+
+			// Compute a digest of the whole directory
+			{
+				h := blake3.New()
+
+				for _, dirStoreFile := range dirStoreFiles {
+					if _, err := h.Write([]byte(dirStoreFile.Path)); err != nil {
+						return nil, err
+					}
+
+					if _, err := h.Write(dirStoreFile.Digest); err != nil {
+						return nil, err
+					}
+				}
+
+				d := make([]byte, DigestLen)
+				if _, err = h.Digest().Read(d); err != nil {
+					return nil, err
+				}
+
+				digest = d
+			}
 
 		default:
 			if mode.Type().IsRegular() {
 				fileType = TypeRegular
 				chunked, err := ChunkFile(path)
 				if err != nil {
-					return fmt.Errorf("error reading chunks: %w", err)
+					return nil, fmt.Errorf("error reading chunks: %w", err)
 				}
 
 				chunks = chunked.Chunks
 				digest = chunked.Digest
 			} else {
-				return fmt.Errorf("error determing file type for %s", path)
+				return nil, fmt.Errorf("error determing file type for %s", path)
 			}
 
 		}
@@ -212,9 +245,10 @@ func ReadStorePath(ctx context.Context, storePath string) ([]*StoreFile, error) 
 			Chunks:     chunks,
 			Digest:     digest,
 		})
+		files = append(files, dirStoreFiles...)
 
-		return nil
-	})
+		return files, nil
+	}
 
-	return files, err
+	return readPath(storePath)
 }

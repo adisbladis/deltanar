@@ -5,7 +5,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"google.golang.org/protobuf/encoding/protodelim"
 
@@ -190,11 +193,80 @@ func binaryCacheMain(inputFile string, binaryCacheDir string) {
 				}
 
 			case *dnar.NarFile_Directory:
-				if err = nw.WriteHeader(&nar.Header{
-					Path: file.Path,
-					Type: nar.TypeDirectory,
-				}); err != nil {
-					return err
+				dir := file.GetDirectory()
+
+				if dir.From > -1 {
+					// Recursively walk directory & write contents into NAR
+					inputDir := inputStoreFiles[dir.From]
+
+					if err = filepath.WalkDir(inputDir, func(path string, d fs.DirEntry, err error) error {
+						info, err := d.Info()
+						if err != nil {
+							return err
+						}
+
+						mode := info.Mode()
+						relPath := file.Path + strings.TrimPrefix(path, inputDir)
+
+						switch {
+						case mode&os.ModeSymlink != 0:
+							target, err := os.Readlink(path)
+							if err != nil {
+								return fmt.Errorf("could not read symlink: %w", err)
+							}
+
+							if err = nw.WriteHeader(&nar.Header{
+								Path:       relPath,
+								Type:       nar.TypeSymlink,
+								LinkTarget: target,
+								Size:       0,
+							}); err != nil {
+								return err
+							}
+
+						case mode.IsDir():
+							if err = nw.WriteHeader(&nar.Header{
+								Path: relPath,
+								Type: nar.TypeDirectory,
+							}); err != nil {
+								return err
+							}
+
+						case mode.IsRegular():
+							if err = nw.WriteHeader(&nar.Header{
+								Path:       relPath,
+								Type:       nar.TypeRegular,
+								Size:       info.Size(),
+								Executable: mode&0111 != 0,
+							}); err != nil {
+								return err
+							}
+
+							fp, err := os.Open(path)
+							if err != nil {
+								return err
+							}
+
+							if _, err = io.Copy(nw, fp); err != nil {
+								return err
+							}
+
+						default:
+							panic("Unknown file type")
+						}
+
+						return nil
+					}); err != nil {
+						return err
+					}
+				} else {
+					// Just write directory header, files are to follow in the message stream
+					if err = nw.WriteHeader(&nar.Header{
+						Path: file.Path,
+						Type: nar.TypeDirectory,
+					}); err != nil {
+						return err
+					}
 				}
 
 			case *dnar.NarFile_Symlink:

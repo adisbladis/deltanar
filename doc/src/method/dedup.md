@@ -13,3 +13,9 @@ If a sub-file chunk already exists in the target Nix store (even in another stor
 
 To avoid packing a long list of chunk entries for files which are fully identical a hash per file is also computed.
 If a file hash matches exactly it's contents will be reused in full.
+
+## Directory
+
+To avoid sending a long list of files for directories which are fuly identical a recursive directory hash is also computed.
+
+If a directory hash matches exactly a reference to it will be packed in the DNAR and the directory contents will be reused.

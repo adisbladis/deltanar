@@ -72,7 +72,10 @@ message NarFile {
     }
 
     message DirectoryFile {
-        bool executable = 1;
+        // If a directory hash was matched copy the directory from here
+        // Note that unlike the chunk index this is an _int64_ where a -1 signifies
+        // that the directory does _not_ already exist on the remote.
+        int64 from = 1;
     }
 
     message SymlinkFile {

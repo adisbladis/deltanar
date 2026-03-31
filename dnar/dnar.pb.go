@@ -565,8 +565,11 @@ func (x *NarFile_RegularFile) GetExecutable() bool {
 }
 
 type NarFile_DirectoryFile struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Executable    bool                   `protobuf:"varint,1,opt,name=executable,proto3" json:"executable,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// If a directory hash was matched copy the directory from here
+	// Note that unlike the chunk index this is an _int64_ where a -1 signifies
+	// that the directory does _not_ already exist on the remote.
+	From          int64 `protobuf:"varint,1,opt,name=from,proto3" json:"from,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -601,11 +604,11 @@ func (*NarFile_DirectoryFile) Descriptor() ([]byte, []int) {
 	return file_dnar_proto_rawDescGZIP(), []int{3, 2}
 }
 
-func (x *NarFile_DirectoryFile) GetExecutable() bool {
+func (x *NarFile_DirectoryFile) GetFrom() int64 {
 	if x != nil {
-		return x.Executable
+		return x.From
 	}
-	return false
+	return 0
 }
 
 type NarFile_SymlinkFile struct {
@@ -821,7 +824,7 @@ const file_dnar_proto_rawDesc = "" +
 	"store_path\x18\x01 \x01(\rR\tstorePath\x12\x12\n" +
 	"\x04path\x18\x02 \x01(\tR\x04path\"\x1d\n" +
 	"\aCAChunk\x12\x12\n" +
-	"\x04data\x18\x01 \x01(\fR\x04data\"\xa9\x06\n" +
+	"\x04data\x18\x01 \x01(\fR\x04data\"\x9d\x06\n" +
 	"\aNarFile\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x125\n" +
 	"\aregular\x18\x02 \x01(\v2\x19.dnar.NarFile.RegularFileH\x00R\aregular\x12;\n" +
@@ -847,11 +850,9 @@ const file_dnar_proto_rawDesc = "" +
 	"\x06chunks\x18\x02 \x03(\v2\x1d.dnar.NarFile.ChunkDescriptorR\x06chunks\x12\x1e\n" +
 	"\n" +
 	"executable\x18\x03 \x01(\bR\n" +
-	"executable\x1a/\n" +
-	"\rDirectoryFile\x12\x1e\n" +
-	"\n" +
-	"executable\x18\x01 \x01(\bR\n" +
-	"executable\x1a%\n" +
+	"executable\x1a#\n" +
+	"\rDirectoryFile\x12\x12\n" +
+	"\x04from\x18\x01 \x01(\x03R\x04from\x1a%\n" +
 	"\vSymlinkFile\x12\x16\n" +
 	"\x06target\x18\x01 \x01(\tR\x06targetB\v\n" +
 	"\tfile_type\"O\n" +
