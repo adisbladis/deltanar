@@ -13,14 +13,17 @@ let
   src = ../.;
 in
 {
-  gofmt = runCommand "gofmt-check" {
-    nativeBuildInputs = [
-      go
-    ];
-  } ''
-    gofmt -l ${src}
-    mkdir $out
-  '';
+  gofmt =
+    runCommand "gofmt-check"
+      {
+        nativeBuildInputs = [
+          go
+        ];
+      }
+      ''
+        gofmt -l ${src}
+        mkdir $out
+      '';
 
   e2e =
     let
