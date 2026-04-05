@@ -1,12 +1,12 @@
 # Getting started
 
 This tutorial shows how to:
-- Setting up requisites
-- Create a a file containing the delta between what's on the target host & deployment closure.
+- Set up prerequisites
+- Create a file containing the delta between what's on the target host & deployment closure.
 - Unpack file into a binary cache
-- Populating the local Nix store
+- Populate the local Nix store
 
-for a host called `spacecraft`.
+These steps apply to a host called `spacecraft`.
 
 ## Creating gcroots
 
@@ -21,10 +21,10 @@ There is one gcroots child directory per host.
 
 ### Steps
 
-First create gcroot directory for host `spacecraft`:
+First, create a gcroot directory for host `spacecraft`:
 - `mkdir -p gcroots/spacecraft`
 
-Symlink an already deployed NixOS generation into our gcroots directory
+Symlink an already deployed NixOS generation into the gcroots directory:
 - `ln -s /nix/store/5vg80fas99lkn1a5i2bnwgwd3ia3i82m-nixos-system-nixos-26.05pre-git gcroots/spacecraft`
 
 > [!NOTE]
@@ -34,21 +34,21 @@ Symlink an already deployed NixOS generation into our gcroots directory
 
 - `dnar-pack --gcroots ./gcroots --host spacecraft --path /nix/store/7mdg60drrnh0wq1j8hmmbhll47czm107-nixos-system-nixos-26.05pre-git`
 
-Will create `delta.dnar` in the current working directory.
+This will create `delta.dnar` in the current working directory.
 
 ## Unpacking
 - `dnar-unpack binary-cache --cache my-cache`
 
-Will unpack `delta.dnar` from the current working directory into a local binary cache directory in `my-cache` in the same layout as `nix copy`, which can then be imported using `nix copy`:
+This will unpack `delta.dnar` from the current working directory into a local binary cache directory at `my-cache` with the same layout as `nix copy`, which can then be imported using `nix copy`:
 
 `nix copy --from file://$(readlink -f my-cache) --all --no-check-sigs`
 
 ## Compression
 
-Deltanar files are uncompressed, and compression is left up to the user.
-To pipe the deltanar output use the special input/output argument `-`:
+DeltaNAR files are uncompressed, and compression is left up to the user.
+To pipe the DeltaNAR output use the special input/output argument `-`:
 - `dnar-pack ... --out - | xz > delta.dnar.xz`
-- `xzcat delta.dnar.xz | dnar-unpack ... --input - `
+- `xzcat delta.dnar.xz | dnar-unpack ... --input -`
 
 ## References
 

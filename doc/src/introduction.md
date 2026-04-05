@@ -1,6 +1,6 @@
 # Introduction
 
-Nix deployments can be very bandwidth intense, and in certain deployments such as spacecraft or other very remote systems this can become a major hurdle.
+Nix deployments can be very bandwidth-intensive, and in certain deployments such as spacecraft or other very remote systems this can become a major hurdle.
 
 This is the problem DeltaNAR aims to solve.
 
