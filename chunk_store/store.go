@@ -1,10 +1,14 @@
-package main
+package chunk_store
 
 import (
 	"fmt"
 	"os"
 	"syscall"
 )
+
+// Create a temporary chunk store
+// This is because an input file may be larger than RAM
+// and needs to be written to persistent storage
 
 type chunkStoreEntry struct {
 	size   int

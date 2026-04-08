@@ -11,21 +11,12 @@
 }:
 let
   src = ../.;
-in
-{
-  gofmt =
-    runCommand "gofmt-check"
-      {
-        nativeBuildInputs = [
-          go
-        ];
-      }
-      ''
-        gofmt -l ${src}
-        mkdir $out
-      '';
 
-  e2e =
+  mkE2eCheck =
+    {
+      name,
+      unpackCmd,
+    }:
     let
       requestsA = python3Packages.requests;
       requestsB = python3Packages.requests.overrideAttrs (old: {
@@ -34,7 +25,7 @@ in
         __invalidateHash = true; # Arbitrary attribute to break hash with requestsA
       });
     in
-    runCommand "dnar-e2e-test"
+    runCommand "dnar-e2e-${name}"
       {
         nativeBuildInputs = [
           nix
@@ -69,12 +60,40 @@ in
         ! test -e store-b/${requestsB}
 
         # Unpack delta.dnar
-        dnar-unpack binary-cache --cache binary-cache
-        nix --extra-experimental-features nix-command copy --from file://$(readlink -f binary-cache) --all --no-check-sigs
+        ${unpackCmd}
 
         # Assert unpack was successful
         test -e store-b/${requestsB}
 
         touch $out
       '';
+
+in
+{
+  gofmt =
+    runCommand "gofmt-check"
+      {
+        nativeBuildInputs = [
+          go
+        ];
+      }
+      ''
+        gofmt -l ${src}
+        mkdir $out
+      '';
+
+  e2e-binary-cache = mkE2eCheck {
+    name = "binary-cache";
+    unpackCmd = ''
+      dnar-unpack binary-cache --cache binary-cache
+      nix --extra-experimental-features nix-command copy --from file://$(readlink -f binary-cache) --all --no-check-sigs
+    '';
+  };
+
+  e2e-nix-store-export = mkE2eCheck {
+    name = "nix-store-export";
+    unpackCmd = ''
+      dnar-unpack nix-store-export | nix-store --import
+    '';
+  };
 }

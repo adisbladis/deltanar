@@ -2,17 +2,6 @@
   lib,
   newScope,
 }:
-let
-  src = builtins.filterSource (name: type: name != "flake.lock" && !lib.hasSuffix ".nix" name) ../.;
-  vendorHash = "sha256-bv2z6aOSxBG+Ss8gJAAQ5ZA+sYDUTbU9bRhnf+mLErc=";
-  env = {
-    CGO_ENABLED = "0";
-  };
-  meta = {
-    license = lib.licenses.mit;
-  };
-
-in
 lib.makeScope newScope (
   self:
   let
@@ -36,7 +25,11 @@ lib.makeScope newScope (
           license = lib.licenses.mit;
         };
 
-        outputs = [ "out" "pack" "unpack" ];
+        outputs = [
+          "out"
+          "pack"
+          "unpack"
+        ];
 
         # Make multi output
         postInstall = ''

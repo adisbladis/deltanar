@@ -1,13 +1,16 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/adisbladis/deltanar/dnar"
 	"github.com/nix-community/go-nix/pkg/storepath"
+
+	"github.com/adisbladis/deltanar/chunk_store"
+	"github.com/adisbladis/deltanar/dnar"
 )
 
 // Manages a local binary cache directory
@@ -81,4 +84,59 @@ func (bc *localBinaryCache) WriteNARInfo(msgNar *dnar.NAR) error {
 	}
 
 	return nil
+}
+
+func binaryCacheMain(inputFile string, binaryCacheDir string) {
+	ioReader, err := openInput(inputFile)
+	if err != nil {
+		panic(err)
+	}
+	defer ioReader.Close()
+	reader := bufio.NewReader(ioReader)
+
+	nars, err := readNARs(reader)
+	if err != nil {
+		panic(err)
+	}
+
+	tempChunkStore, err := chunk_store.OpenTempChunkStore()
+	if err != nil {
+		panic(err)
+	}
+	defer func() {
+		_ = tempChunkStore.Close()
+	}()
+
+	if err = readChunks(reader, tempChunkStore); err != nil {
+		panic(err)
+	}
+
+	inputStoreFiles, err := readInputStoreFiles(reader)
+	if err != nil {
+		panic(err)
+	}
+
+	if err = readEOF(reader); err != nil {
+		panic(err)
+	}
+
+	binaryCache := newLocalBinaryCache(binaryCacheDir)
+	if err = binaryCache.Create(); err != nil {
+		panic(err)
+	}
+
+	for _, msgNar := range nars {
+		outf, err := binaryCache.CreateNAR(msgNar.Path)
+		if err != nil {
+			panic(err)
+		}
+
+		if err := writeNAR(outf, msgNar, tempChunkStore, inputStoreFiles); err != nil {
+			panic(err)
+		}
+
+		if err = binaryCache.WriteNARInfo(msgNar); err != nil {
+			panic(err)
+		}
+	}
 }
