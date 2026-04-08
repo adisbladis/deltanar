@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/adisbladis/deltanar/store"
+	"github.com/adisbladis/deltanar/internal/store"
 )
 
 func ReadDirectory(gcRootDir string, host string) ([]string, error) {

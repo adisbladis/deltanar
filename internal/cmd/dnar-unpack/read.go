@@ -7,8 +7,8 @@ import (
 
 	"google.golang.org/protobuf/encoding/protodelim"
 
-	"github.com/adisbladis/deltanar/chunk_store"
-	"github.com/adisbladis/deltanar/dnar"
+	"github.com/adisbladis/deltanar/internal/chunk_store"
+	"github.com/adisbladis/deltanar/internal/dnar"
 )
 
 func readNARs(reader *bufio.Reader) ([]*dnar.NAR, error) {

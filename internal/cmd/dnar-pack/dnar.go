@@ -10,9 +10,9 @@ import (
 
 	"google.golang.org/protobuf/encoding/protodelim"
 
-	"github.com/adisbladis/deltanar/database"
-	"github.com/adisbladis/deltanar/dnar"
-	"github.com/adisbladis/deltanar/store"
+	"github.com/adisbladis/deltanar/internal/database"
+	"github.com/adisbladis/deltanar/internal/dnar"
+	"github.com/adisbladis/deltanar/internal/store"
 )
 
 func writeDNAR(ctx context.Context, writer io.Writer, queries *database.Queries, storePaths []string, localStoreFiles []*database.Storefile, localStoreChunks []*database.Chunk) error {

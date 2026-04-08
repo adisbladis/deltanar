@@ -11,8 +11,8 @@ import (
 
 	"github.com/nix-community/go-nix/pkg/nar"
 
-	"github.com/adisbladis/deltanar/chunk_store"
-	"github.com/adisbladis/deltanar/dnar"
+	"github.com/adisbladis/deltanar/internal/chunk_store"
+	"github.com/adisbladis/deltanar/internal/dnar"
 )
 
 func writeUint64LE(w io.Writer, n uint64) error {

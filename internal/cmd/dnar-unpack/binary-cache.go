@@ -9,8 +9,8 @@ import (
 
 	"github.com/nix-community/go-nix/pkg/storepath"
 
-	"github.com/adisbladis/deltanar/chunk_store"
-	"github.com/adisbladis/deltanar/dnar"
+	"github.com/adisbladis/deltanar/internal/chunk_store"
+	"github.com/adisbladis/deltanar/internal/dnar"
 )
 
 // Manages a local binary cache directory

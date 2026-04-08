@@ -9,8 +9,8 @@ import (
 	"golang.org/x/sync/errgroup"
 	_ "modernc.org/sqlite"
 
-	"github.com/adisbladis/deltanar/database"
-	"github.com/adisbladis/deltanar/store"
+	"github.com/adisbladis/deltanar/internal/database"
+	"github.com/adisbladis/deltanar/internal/store"
 )
 
 func indexPaths(ctx context.Context, db *sql.DB, paths []string) error {

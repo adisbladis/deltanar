@@ -9,9 +9,9 @@ import (
 	"os"
 	"slices"
 
-	"github.com/adisbladis/deltanar/database"
-	"github.com/adisbladis/deltanar/gcroots"
-	"github.com/adisbladis/deltanar/store"
+	"github.com/adisbladis/deltanar/internal/database"
+	"github.com/adisbladis/deltanar/internal/gcroots"
+	"github.com/adisbladis/deltanar/internal/store"
 )
 
 func main() {
