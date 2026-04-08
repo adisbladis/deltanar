@@ -31,6 +31,11 @@ lib.makeScope newScope (
           "unpack"
         ];
 
+        ldflags = [
+          "-s"
+          "-w"
+        ];
+
         # Make multi output
         postInstall = ''
           mkdir -p $pack/bin $unpack/bin
