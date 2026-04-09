@@ -3,5 +3,5 @@
 The DNAR format is specified using Protobuf.
 
 ```proto
-{{#include ../../../dnar/dnar.proto}}
+{{#include ../../../internal/dnar/dnar.proto}}
 ```

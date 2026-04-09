@@ -3,7 +3,7 @@
 This tutorial shows how to:
 - Set up prerequisites
 - Create a file containing the delta between what's on the target host & deployment closure.
-- Unpack file into a binary cache
+- Unpack file into a Nix store or a binary cache
 - Populate the local Nix store
 
 These steps apply to a host called `spacecraft`.
@@ -37,11 +37,24 @@ Symlink an already deployed NixOS generation into the gcroots directory:
 This will create `delta.dnar` in the current working directory.
 
 ## Unpacking
+
+### To a Nix store
+
+- `dnar-unpack nix-store-export | nix-store --import`
+
+Will unpack `delta.dnar` from the current working directory into a local Nix store.
+
+This mode is particularly useful in deployment pipelines.
+
+### To a binary cache
+
 - `dnar-unpack binary-cache --cache my-cache`
 
-This will unpack `delta.dnar` from the current working directory into a local binary cache directory at `my-cache` with the same layout as `nix copy`, which can then be imported using `nix copy`:
+Will unpack `delta.dnar` from the current working directory into a local binary cache directory at `my-cache` with the same layout as `nix copy`, which can then be imported using `nix copy`:
 
-`nix copy --from file://$(readlink -f my-cache) --all --no-check-sigs`
+- `nix copy --from file://$(readlink -f my-cache) --all --no-check-sigs`
+
+This mode is particularly useful when deploying closures to a remote facility with multiple hosts.
 
 ## Compression
 
