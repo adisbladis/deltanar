@@ -20,6 +20,7 @@ func writeDNAR(ctx context.Context, writer io.Writer, queries *database.Queries,
 		_, err := protodelim.MarshalTo(writer, &dnar.StreamHeader{
 			Length: uint64(length),
 		})
+
 		return err
 	}
 
@@ -170,8 +171,6 @@ func writeDNAR(ctx context.Context, writer io.Writer, queries *database.Queries,
 						msgChunk := &dnar.NarFile_ChunkDescriptor{}
 						meta.Chunks[i] = msgChunk
 
-						// msgChunk := chunkList.At(i)
-
 						localChunks, ok := localStoreChunksByDigest[string(chunk.Hash)]
 						if ok { // WriteOp on the chunk range
 							localChunk := localChunks[0]
@@ -251,7 +250,12 @@ func writeDNAR(ctx context.Context, writer io.Writer, queries *database.Queries,
 					return err
 				}
 
-				fd, err = os.Open(dbStorePath.Path + dbFile.Path)
+				filePath := dbStorePath.Path
+				if dbFile.Path != "/" {
+					filePath += dbFile.Path
+				}
+
+				fd, err = os.Open(filePath)
 				if err != nil {
 					return err
 				}
