@@ -119,15 +119,13 @@ func writeDNAR(ctx context.Context, writer io.Writer, queries *database.Queries,
 		// If a directory was matched in-full we can skip writing the individual files
 		//  from it to the delta.
 		//
-		// Maintain a list of directories which are already copied in-full so the files from it can be skipped.
-		recursiveDirs := []string{}
+		// Keep a reference of the last directory that is already matched in-full so the files from it can be skipped.
+		recursiveDir := ""
 
 	STOREFILE_LOOP:
 		for _, storeFile := range storeFiles {
-			for _, recursiveDir := range recursiveDirs {
-				if strings.HasPrefix(storeFile.Path, recursiveDir) {
-					continue STOREFILE_LOOP
-				}
+			if recursiveDir != "" && strings.HasPrefix(storeFile.Path, recursiveDir) {
+				continue STOREFILE_LOOP
 			}
 
 			file := &dnar.NarFile{
@@ -204,7 +202,7 @@ func writeDNAR(ctx context.Context, writer io.Writer, queries *database.Queries,
 				// Check for exact dir hash match
 				existingDirs, ok := localStoreFilesByDigest[string(storeFile.Hash)]
 				if ok {
-					recursiveDirs = append(recursiveDirs, storeFile.Path)
+					recursiveDir = storeFile.Path
 					existingDir := existingDirs[0]
 					from = int64(addInputStoreFile(existingDir))
 				}
