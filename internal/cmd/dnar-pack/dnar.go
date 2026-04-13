@@ -312,9 +312,14 @@ func writeDNAR(ctx context.Context, writer io.Writer, queries *database.Queries,
 
 		// Write out store files
 		for i, inputStoreFile := range inputStoreFiles {
+			path := inputStoreFile.Path
+			if path == "/" {
+				path = ""
+			}
+
 			trailer.Files[i] = &dnar.FileDescriptor{
 				StorePath: uint32(slices.Index(inputStorePathIDs, inputStoreFile.StorePathID)),
-				Path:      inputStoreFile.Path,
+				Path:      path,
 			}
 		}
 
