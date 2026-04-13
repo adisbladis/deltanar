@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"io"
 	"os"
@@ -22,6 +21,12 @@ func writeDNAR(ctx context.Context, writer io.Writer, queries *database.Queries,
 		})
 
 		return err
+	}
+
+	// Group local store files by ID for lookup
+	localStoreFilesByID := make(map[int64]*database.Storefile)
+	for _, storeFile := range localStoreFiles {
+		localStoreFilesByID[storeFile.ID] = storeFile
 	}
 
 	// Group local store files by hash for lookup
@@ -54,34 +59,34 @@ func writeDNAR(ctx context.Context, writer io.Writer, queries *database.Queries,
 
 	// Store files to send over the wire in header
 	var inputStoreFiles []*database.Storefile
+	inputStoreFilesMap := make(map[int64]uint64) // Keep a map for quick lookup of already indexed store files
 	addInputStoreFile := func(file *database.Storefile) uint64 {
-		i := slices.IndexFunc(inputStoreFiles, func(other *database.Storefile) bool {
-			return file.ID == other.ID
-		})
-		if i > -1 {
-			return uint64(i)
+		other, ok := inputStoreFilesMap[file.ID]
+		if ok {
+			return other
 		}
 
 		addInputStorePathID(file.StorePathID)
 
-		i = len(inputStoreFiles)
+		i := len(inputStoreFiles)
 		inputStoreFiles = append(inputStoreFiles, file)
+		inputStoreFilesMap[file.ID] = uint64(i)
 
 		return uint64(i)
 	}
 
 	// Store which chunks to send over by their digest
 	var chunkDeps []*database.Chunk
+	chunkDepsMap := make(map[string]uint64) // Keep a map for quick lookup of already indexed chunks
 	addChunkDep := func(chunk *database.Chunk) uint64 {
-		i := slices.IndexFunc(chunkDeps, func(other *database.Chunk) bool {
-			return bytes.Equal(chunk.Hash, other.Hash)
-		})
-		if i > -1 {
-			return uint64(i)
+		other, ok := chunkDepsMap[string(chunk.Hash)]
+		if ok {
+			return other
 		}
 
-		i = len(chunkDeps)
+		i := len(chunkDeps)
 		chunkDeps = append(chunkDeps, chunk)
+		chunkDepsMap[string(chunk.Hash)] = uint64(i)
 
 		return uint64(i)
 	}
@@ -174,9 +179,7 @@ func writeDNAR(ctx context.Context, writer io.Writer, queries *database.Queries,
 						localChunks, ok := localStoreChunksByDigest[string(chunk.Hash)]
 						if ok { // WriteOp on the chunk range
 							localChunk := localChunks[0]
-							localStoreFile := localStoreFiles[slices.IndexFunc(localStoreFiles, func(other *database.Storefile) bool {
-								return localChunk.FileID == other.ID
-							})]
+							localStoreFile := localStoreFilesByID[localChunk.FileID]
 
 							msgChunk.ChunkType = &dnar.NarFile_ChunkDescriptor_Fd{
 								Fd: &dnar.NarFile_ChunkDescriptor_FDChunk{
@@ -234,7 +237,8 @@ func writeDNAR(ctx context.Context, writer io.Writer, queries *database.Queries,
 	}
 
 	// Write CA chunks
-	{
+	// Note: Wrapped in a func so the fds map can be cleaned up with defer as early as possible
+	err := func() error {
 		fds := make(map[int64]*os.File)
 
 		for _, chunk := range chunkDeps {
@@ -284,6 +288,11 @@ func writeDNAR(ctx context.Context, writer io.Writer, queries *database.Queries,
 				return err
 			}
 		}
+
+		return nil
+	}()
+	if err != nil {
+		return err
 	}
 
 	// Write Path trailer

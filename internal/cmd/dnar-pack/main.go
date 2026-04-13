@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime/pprof"
 	"slices"
 
 	"github.com/adisbladis/deltanar/internal/database"
@@ -16,6 +17,10 @@ import (
 
 func main() {
 	ctx := context.Background()
+
+    f, _ := os.Create("cpu.prof")
+    pprof.StartCPUProfile(f)
+    defer pprof.StopCPUProfile()
 
 	var dbPath string
 	flag.StringVar(&dbPath, "db", "dnar.sqlite3", "path to sqlite database (created on first use)")
