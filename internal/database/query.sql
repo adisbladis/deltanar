@@ -22,12 +22,32 @@ SELECT file.* FROM StoreFile AS file JOIN StorePath path ON path.id = file.store
 -- name: GetStoreFileByID :one
 SELECT * FROM StoreFile WHERE id = ?;
 
--- name: GetStoreChunks :many
-SELECT * FROM Chunk WHERE file_id = ? ORDER BY id;
+-- name: GetLocalFileByHash :one
+-- A store file the target already has (on one of local_paths) with the given
+-- content hash, for whole-file and directory matching.
+SELECT file.* FROM StoreFile file
+JOIN StorePath path ON path.id = file.store_path_id
+WHERE file.hash = ? AND path.path IN (sqlc.slice('local_paths'))
+LIMIT 1;
 
--- name: GetStoreChunksByPaths :many
-SELECT chunk.* FROM Chunk as chunk
-JOIN StoreFile file ON chunk.file_id = file.id
-JOIN StorePath path ON file.store_path_id = path.id
-WHERE path.path IN (sqlc.slice('paths'))
-ORDER BY chunk.id;
+-- name: GetStoreChunksWithLocalMatch :many
+-- Each chunk of file_id (in order), joined to a chunk the target already has
+-- (on one of local_paths) with the same content. local_file_id is 0 when the
+-- target does not have the chunk. GROUP BY collapses a hash present in several
+-- local files to a single match.
+SELECT
+  nc.size, nc.offset, nc.hash,
+  COALESCE(lc.file_id, 0) AS local_file_id,
+  COALESCE(lc.size, 0) AS local_size,
+  COALESCE(lc.offset, 0) AS local_offset
+FROM Chunk nc
+LEFT JOIN Chunk lc
+  ON lc.hash = nc.hash
+  AND lc.file_id IN (
+    SELECT file.id FROM StoreFile file
+    JOIN StorePath path ON path.id = file.store_path_id
+    WHERE path.path IN (sqlc.slice('local_paths'))
+  )
+WHERE nc.file_id = ?
+GROUP BY nc.id
+ORDER BY nc.id;

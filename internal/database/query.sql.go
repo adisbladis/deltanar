@@ -62,72 +62,111 @@ func (q *Queries) CreateStorePath(ctx context.Context, path string) (Storepath, 
 	return i, err
 }
 
-const getStoreChunks = `-- name: GetStoreChunks :many
-SELECT id, file_id, hash, size, "offset" FROM Chunk WHERE file_id = ? ORDER BY id
+const getLocalFileByHash = `-- name: GetLocalFileByHash :one
+SELECT file.id, file.store_path_id, file.path, file.size, file.type, file.link_target, file.executable, file.hash FROM StoreFile file
+JOIN StorePath path ON path.id = file.store_path_id
+WHERE file.hash = ? AND path.path IN (/*SLICE:local_paths*/?)
+LIMIT 1
 `
 
-func (q *Queries) GetStoreChunks(ctx context.Context, fileID int64) ([]Chunk, error) {
-	rows, err := q.db.QueryContext(ctx, getStoreChunks, fileID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []Chunk
-	for rows.Next() {
-		var i Chunk
-		if err := rows.Scan(
-			&i.ID,
-			&i.FileID,
-			&i.Hash,
-			&i.Size,
-			&i.Offset,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
+type GetLocalFileByHashParams struct {
+	Hash       []byte
+	LocalPaths []string
 }
 
-const getStoreChunksByPaths = `-- name: GetStoreChunksByPaths :many
-SELECT chunk.id, chunk.file_id, chunk.hash, chunk.size, chunk."offset" FROM Chunk as chunk
-JOIN StoreFile file ON chunk.file_id = file.id
-JOIN StorePath path ON file.store_path_id = path.id
-WHERE path.path IN (/*SLICE:paths*/?)
-ORDER BY chunk.id
-`
-
-func (q *Queries) GetStoreChunksByPaths(ctx context.Context, paths []string) ([]Chunk, error) {
-	query := getStoreChunksByPaths
+// A store file the target already has (on one of local_paths) with the given
+// content hash, for whole-file and directory matching.
+func (q *Queries) GetLocalFileByHash(ctx context.Context, arg GetLocalFileByHashParams) (Storefile, error) {
+	query := getLocalFileByHash
 	var queryParams []interface{}
-	if len(paths) > 0 {
-		for _, v := range paths {
+	queryParams = append(queryParams, arg.Hash)
+	if len(arg.LocalPaths) > 0 {
+		for _, v := range arg.LocalPaths {
 			queryParams = append(queryParams, v)
 		}
-		query = strings.Replace(query, "/*SLICE:paths*/?", strings.Repeat(",?", len(paths))[1:], 1)
+		query = strings.Replace(query, "/*SLICE:local_paths*/?", strings.Repeat(",?", len(arg.LocalPaths))[1:], 1)
 	} else {
-		query = strings.Replace(query, "/*SLICE:paths*/?", "NULL", 1)
+		query = strings.Replace(query, "/*SLICE:local_paths*/?", "NULL", 1)
 	}
+	row := q.db.QueryRowContext(ctx, query, queryParams...)
+	var i Storefile
+	err := row.Scan(
+		&i.ID,
+		&i.StorePathID,
+		&i.Path,
+		&i.Size,
+		&i.Type,
+		&i.LinkTarget,
+		&i.Executable,
+		&i.Hash,
+	)
+	return i, err
+}
+
+const getStoreChunksWithLocalMatch = `-- name: GetStoreChunksWithLocalMatch :many
+SELECT
+  nc.size, nc.offset, nc.hash,
+  COALESCE(lc.file_id, 0) AS local_file_id,
+  COALESCE(lc.size, 0) AS local_size,
+  COALESCE(lc.offset, 0) AS local_offset
+FROM Chunk nc
+LEFT JOIN Chunk lc
+  ON lc.hash = nc.hash
+  AND lc.file_id IN (
+    SELECT file.id FROM StoreFile file
+    JOIN StorePath path ON path.id = file.store_path_id
+    WHERE path.path IN (/*SLICE:local_paths*/?)
+  )
+WHERE nc.file_id = ?
+GROUP BY nc.id
+ORDER BY nc.id
+`
+
+type GetStoreChunksWithLocalMatchParams struct {
+	LocalPaths []string
+	FileID     int64
+}
+
+type GetStoreChunksWithLocalMatchRow struct {
+	Size        int64
+	Offset      int64
+	Hash        []byte
+	LocalFileID int64
+	LocalSize   int64
+	LocalOffset int64
+}
+
+// Each chunk of file_id (in order), joined to a chunk the target already has
+// (on one of local_paths) with the same content. local_file_id is 0 when the
+// target does not have the chunk. GROUP BY collapses a hash present in several
+// local files to a single match.
+func (q *Queries) GetStoreChunksWithLocalMatch(ctx context.Context, arg GetStoreChunksWithLocalMatchParams) ([]GetStoreChunksWithLocalMatchRow, error) {
+	query := getStoreChunksWithLocalMatch
+	var queryParams []interface{}
+	if len(arg.LocalPaths) > 0 {
+		for _, v := range arg.LocalPaths {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:local_paths*/?", strings.Repeat(",?", len(arg.LocalPaths))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:local_paths*/?", "NULL", 1)
+	}
+	queryParams = append(queryParams, arg.FileID)
 	rows, err := q.db.QueryContext(ctx, query, queryParams...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Chunk
+	var items []GetStoreChunksWithLocalMatchRow
 	for rows.Next() {
-		var i Chunk
+		var i GetStoreChunksWithLocalMatchRow
 		if err := rows.Scan(
-			&i.ID,
-			&i.FileID,
-			&i.Hash,
 			&i.Size,
 			&i.Offset,
+			&i.Hash,
+			&i.LocalFileID,
+			&i.LocalSize,
+			&i.LocalOffset,
 		); err != nil {
 			return nil, err
 		}

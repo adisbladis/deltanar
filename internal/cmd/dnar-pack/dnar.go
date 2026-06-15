@@ -15,7 +15,7 @@ import (
 	"github.com/adisbladis/deltanar/internal/store"
 )
 
-func writeDNAR(ctx context.Context, writer io.Writer, queries *database.Queries, storePaths []string, localStoreFiles []*database.Storefile, localStoreChunks []*database.Chunk) error {
+func writeDNAR(ctx context.Context, writer io.Writer, queries *database.Queries, storePaths []string, localStorePaths []string) error {
 	sendStreamHeader := func(length int) error {
 		_, err := protodelim.MarshalTo(writer, &dnar.StreamHeader{
 			Length: uint64(length),
@@ -24,25 +24,8 @@ func writeDNAR(ctx context.Context, writer io.Writer, queries *database.Queries,
 		return err
 	}
 
-	// Group local store files by ID for lookup
-	localStoreFilesByID := make(map[int64]*database.Storefile)
-	for _, storeFile := range localStoreFiles {
-		localStoreFilesByID[storeFile.ID] = storeFile
-	}
-
-	// Group local store files by hash for lookup
-	localStoreFilesByDigest := make(map[string][]*database.Storefile)
-	for _, storeFile := range localStoreFiles {
-		digest := string(storeFile.Hash)
-		localStoreFilesByDigest[digest] = append(localStoreFilesByDigest[digest], storeFile)
-	}
-
-	// Group local store chunks by hash for lookup
-	localStoreChunksByDigest := make(map[string][]*database.Chunk)
-	for _, chunk := range localStoreChunks {
-		digest := string(chunk.Hash)
-		localStoreChunksByDigest[digest] = append(localStoreChunksByDigest[digest], chunk)
-	}
+	// Local content index
+	li := newLocalIndex(queries, localStorePaths)
 
 	// Store paths to send over the wire in header
 	var inputStorePathIDs []int64
@@ -215,9 +198,11 @@ func writeDNAR(ctx context.Context, writer io.Writer, queries *database.Queries,
 				// TODO: Create inline data for very short writes
 
 				// Check if target host already has file by hash
-				existingFiles, ok := localStoreFilesByDigest[string(storeFile.Hash)]
-				if ok { // WriteOp on the whole file byte range
-					existingFile := existingFiles[0]
+				existingFile, err := li.fileByHash(ctx, storeFile.Hash)
+				if err != nil {
+					return err
+				}
+				if existingFile != nil { // WriteOp on the whole file byte range
 					chunkDescriptor := &dnar.NarFile_ChunkDescriptor{
 						ChunkType: &dnar.NarFile_ChunkDescriptor_Fd{
 							Fd: &dnar.NarFile_ChunkDescriptor_FDChunk{
@@ -231,7 +216,7 @@ func writeDNAR(ctx context.Context, writer io.Writer, queries *database.Queries,
 
 					meta.Chunks = []*dnar.NarFile_ChunkDescriptor{chunkDescriptor}
 				} else { // Write file chunk by chunk
-					chunks, err := queries.GetStoreChunks(ctx, storeFile.ID)
+					chunks, err := li.fileChunks(ctx, storeFile.ID)
 					if err != nil {
 						return err
 					}
@@ -240,12 +225,10 @@ func writeDNAR(ctx context.Context, writer io.Writer, queries *database.Queries,
 
 					// Resolve the most "popular" file, referenced by the most chunks & use
 					// that as the reference for computing delta.
-					localChunkFor := make([]*database.Chunk, len(chunks))
 					refFileVotes := make(map[int64]int)
-					for i, chunk := range chunks {
-						if localChunks, ok := localStoreChunksByDigest[string(chunk.Hash)]; ok {
-							localChunkFor[i] = localChunks[0]
-							refFileVotes[localChunks[0].FileID]++
+					for _, m := range chunks {
+						if m.matched {
+							refFileVotes[m.localFileID]++
 						}
 					}
 
@@ -267,7 +250,7 @@ func writeDNAR(ctx context.Context, writer io.Writer, queries *database.Queries,
 						if sizeCap < refSizeFloor {
 							sizeCap = refSizeFloor
 						}
-						if f := localStoreFilesByID[refFileID]; f != nil && f.Size > 0 && f.Size <= sizeCap {
+						if f, err := li.storeFileByID(ctx, refFileID); err == nil && f.Size > 0 && f.Size <= sizeCap {
 							if idx, err := getRefIndex(f); err == nil {
 								refStoreFile, refFileIndex = f, idx
 							}
@@ -276,19 +259,22 @@ func writeDNAR(ctx context.Context, writer io.Writer, queries *database.Queries,
 
 					fileAbsPath := storeFileAbsPath(storePath, storeFile.Path)
 
-					for i, chunk := range chunks {
+					for i, m := range chunks {
 						msgChunk := &dnar.NarFile_ChunkDescriptor{}
 						meta.Chunks[i] = msgChunk
 
-						if localChunk := localChunkFor[i]; localChunk != nil { // WriteOp on the chunk range
-							localStoreFile := localStoreFilesByID[localChunk.FileID]
+						if m.matched { // WriteOp on the chunk range
+							localStoreFile, err := li.storeFileByID(ctx, m.localFileID)
+							if err != nil {
+								return err
+							}
 
 							msgChunk.ChunkType = &dnar.NarFile_ChunkDescriptor_Fd{
 								Fd: &dnar.NarFile_ChunkDescriptor_FDChunk{
 									Index:  addInputStoreFile(localStoreFile),
-									Size:   uint64(localChunk.Size),
-									Offset: uint64(localChunk.Offset),
-									Digest: chunk.Hash,
+									Size:   uint64(m.localSize),
+									Offset: uint64(m.localOffset),
+									Digest: m.hash,
 								},
 							}
 							continue
@@ -296,8 +282,8 @@ func writeDNAR(ctx context.Context, writer io.Writer, queries *database.Queries,
 
 						// Chunk is missing on the target. Opportunistically delta it against
 						// the whole reference file & fall back to sending it verbatim.
-						if refFileIndex != nil && chunk.Size > 0 {
-							chunkData, err := readFileChunk(fileAbsPath, chunk.Offset, chunk.Size)
+						if refFileIndex != nil && m.size > 0 {
+							chunkData, err := readFileChunk(fileAbsPath, m.offset, m.size)
 							if err != nil {
 								return err
 							}
@@ -321,7 +307,12 @@ func writeDNAR(ctx context.Context, writer io.Writer, queries *database.Queries,
 						// WriteOp on CA chunk
 						msgChunk.ChunkType = &dnar.NarFile_ChunkDescriptor_Ca{
 							Ca: &dnar.NarFile_ChunkDescriptor_CAChunk{
-								Index: addChunkDep(&chunk),
+								Index: addChunkDep(&database.Chunk{
+									FileID: storeFile.ID,
+									Hash:   m.hash,
+									Size:   m.size,
+									Offset: m.offset,
+								}),
 							},
 						}
 					}
@@ -330,10 +321,12 @@ func writeDNAR(ctx context.Context, writer io.Writer, queries *database.Queries,
 				var from int64 = -1
 
 				// Check for exact dir hash match
-				existingDirs, ok := localStoreFilesByDigest[string(storeFile.Hash)]
-				if ok {
+				existingDir, err := li.fileByHash(ctx, storeFile.Hash)
+				if err != nil {
+					return err
+				}
+				if existingDir != nil {
 					recursiveDir = storeFile.Path
-					existingDir := existingDirs[0]
 					from = int64(addInputStoreFile(existingDir))
 				}
 
@@ -366,7 +359,7 @@ func writeDNAR(ctx context.Context, writer io.Writer, queries *database.Queries,
 
 	// Write the chunk stream (verbatim CA chunks + delta payloads)
 	// Note: Wrapped in a func so the fds map can be cleaned up with defer as early as possible
-	err := func() error {
+	err = func() error {
 		fds := make(map[int64]*os.File)
 
 		for _, payload := range chunkDeps {

@@ -99,33 +99,6 @@ func main() {
 	}()
 	queries := database.New(tx)
 
-	// Known files on the deployment target
-	var localStoreFiles []*database.Storefile
-	{
-		for _, localPath := range localStorePaths {
-			storeFiles, err := queries.GetStoreFiles(ctx, localPath)
-			if err != nil {
-				panic(err)
-			}
-
-			for _, storeFile := range storeFiles {
-				localStoreFiles = append(localStoreFiles, &storeFile)
-			}
-		}
-	}
-
-	// Known chunks on the deployment target
-	var localStoreChunks []*database.Chunk
-	{
-		chunks, err := queries.GetStoreChunksByPaths(ctx, localStorePaths)
-		if err != nil {
-			panic(err)
-		}
-		for _, chunk := range chunks {
-			localStoreChunks = append(localStoreChunks, &chunk)
-		}
-	}
-
 	var writer io.Writer
 	if outputFile == "-" {
 		writer = os.Stdout
@@ -138,7 +111,7 @@ func main() {
 	}
 
 	// Write DNAR archive
-	err = writeDNAR(ctx, writer, queries, newStorePaths, localStoreFiles, localStoreChunks)
+	err = writeDNAR(ctx, writer, queries, newStorePaths, localStorePaths)
 	if err != nil {
 		panic(err)
 	}
