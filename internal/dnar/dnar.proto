@@ -39,8 +39,6 @@ message NarFile {
             CAChunk ca = 1;
             // Read from file descriptor
             FDChunk fd = 2;
-            // Inline data (for very short data)
-            InlineChunk inline = 3;
             // Reconstruct from a delta against an existing base chunk
             DeltaChunk delta = 4;
         }
@@ -54,10 +52,6 @@ message NarFile {
             uint64 size = 2;
             uint64 offset = 3;
             bytes digest = 4; // Chunk digest (verify that existing store contents match)
-        }
-
-        message InlineChunk {
-            bytes data = 1;
         }
 
         // A chunk that's not present on the target but can be reconstructed from a binary delta.

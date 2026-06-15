@@ -165,12 +165,6 @@ func writeNAR(
 					if _, err = nw.Write(chunkData); err != nil {
 						return err
 					}
-
-				case *dnar.NarFile_ChunkDescriptor_Inline:
-					inlineMeta := chunk.GetInline()
-					if _, err = nw.Write(inlineMeta.Data); err != nil {
-						return err
-					}
 				}
 			}
 

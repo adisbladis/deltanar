@@ -200,8 +200,6 @@ func writeDNAR(ctx context.Context, writer io.Writer, queries *database.Queries,
 					Regular: meta,
 				}
 
-				// TODO: Create inline data for very short writes
-
 				// Check if target host already has file by hash
 				existingFile, err := li.fileByHash(ctx, storeFile.Hash)
 				if err != nil {
