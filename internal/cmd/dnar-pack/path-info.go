@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"os/exec"
 	"path/filepath"
 )
@@ -14,10 +13,13 @@ type nixPathInfo struct {
 	References []string `json:"references"`
 }
 
-func getPathInfo(storePath string) (*nixPathInfo, error) {
-	cmd := exec.Command("nix", "--extra-experimental-features", "nix-command", "path-info", "--json", storePath)
+func getPathInfos(storePaths []string) (map[string]*nixPathInfo, error) {
+	if len(storePaths) == 0 {
+		return map[string]*nixPathInfo{}, nil
+	}
 
-	out, err := cmd.Output()
+	args := append([]string{"--extra-experimental-features", "nix-command", "path-info", "--json"}, storePaths...)
+	out, err := exec.Command("nix", args...).Output()
 	if err != nil {
 		return nil, err
 	}
@@ -27,14 +29,11 @@ func getPathInfo(storePath string) (*nixPathInfo, error) {
 		return nil, err
 	}
 
-	pathInfo, ok := pathinfos[storePath]
-	if !ok {
-		return nil, fmt.Errorf("store path '%s' not found in nix path-info output", storePath)
+	for _, pathInfo := range pathinfos {
+		for i, ref := range pathInfo.References {
+			pathInfo.References[i] = filepath.Base(ref)
+		}
 	}
 
-	for i, ref := range pathInfo.References {
-		pathInfo.References[i] = filepath.Base(ref)
-	}
-
-	return pathInfo, nil
+	return pathinfos, nil
 }

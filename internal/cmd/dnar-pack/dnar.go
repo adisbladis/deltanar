@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"slices"
 	"strings"
 
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/protobuf/encoding/protodelim"
 
 	"github.com/adisbladis/deltanar/internal/database"
@@ -93,21 +96,16 @@ func writeDNAR(ctx context.Context, writer io.Writer, queries *database.Queries,
 			_ = fd.Close()
 		}
 	}()
-	readFileChunk := func(path string, offset, size int64) ([]byte, error) {
-		fd, ok := deltaFDs[path]
-		if !ok {
-			f, err := os.Open(path)
-			if err != nil {
-				return nil, err
-			}
-			deltaFDs[path] = f
-			fd = f
+	getFD := func(path string) (*os.File, error) {
+		if fd, ok := deltaFDs[path]; ok {
+			return fd, nil
 		}
-		buf := make([]byte, size)
-		if _, err := fd.ReadAt(buf, offset); err != nil {
+		f, err := os.Open(path)
+		if err != nil {
 			return nil, err
 		}
-		return buf, nil
+		deltaFDs[path] = f
+		return f, nil
 	}
 
 	// Cache of store path strings for resolving file paths & picking delta base chunks.
@@ -142,6 +140,13 @@ func writeDNAR(ctx context.Context, writer io.Writer, queries *database.Queries,
 		return refCache.get(storeFileAbsPath(storePath, file.Path), file.ID)
 	}
 
+	// Fetch narinfo metadata for every store path up front in one nix
+	// invocation, instead of spawning nix once per path inside the loop.
+	pathInfos, err := getPathInfos(storePaths)
+	if err != nil {
+		return err
+	}
+
 	// Send NAR stream header
 	if err := sendStreamHeader(len(storePaths)); err != nil {
 		return err
@@ -154,9 +159,9 @@ func writeDNAR(ctx context.Context, writer io.Writer, queries *database.Queries,
 			return err
 		}
 
-		pathInfo, err := getPathInfo(storePath)
-		if err != nil {
-			return err
+		pathInfo, ok := pathInfos[storePath]
+		if !ok {
+			return fmt.Errorf("store path '%s' not found in nix path-info output", storePath)
 		}
 
 		nar := &dnar.NAR{
@@ -259,11 +264,43 @@ func writeDNAR(ctx context.Context, writer io.Writer, queries *database.Queries,
 
 					fileAbsPath := storeFileAbsPath(storePath, storeFile.Path)
 
+					// Compute the delta for each missing chunk in parallel.
+					deltaResults := make([][]byte, len(chunks))
+					if refFileIndex != nil {
+						fp, err := getFD(fileAbsPath)
+						if err != nil {
+							return err
+						}
+
+						eg := errgroup.Group{}
+						eg.SetLimit(runtime.NumCPU())
+						for i, m := range chunks {
+							if m.matched || m.size == 0 {
+								continue
+							}
+							eg.Go(func() error {
+								chunkData := make([]byte, m.size)
+								if _, err := fp.ReadAt(chunkData, m.offset); err != nil {
+									return err
+								}
+								if d := refFileIndex.Diff(chunkData); len(d) < len(chunkData) {
+									deltaResults[i] = d // delta pays off
+								}
+								return nil
+							})
+						}
+						if err := eg.Wait(); err != nil {
+							return err
+						}
+					}
+
+					// Assemble chunk descriptors in order.
 					for i, m := range chunks {
 						msgChunk := &dnar.NarFile_ChunkDescriptor{}
 						meta.Chunks[i] = msgChunk
 
-						if m.matched { // WriteOp on the chunk range
+						switch {
+						case m.matched: // WriteOp on the chunk range
 							localStoreFile, err := li.storeFileByID(ctx, m.localFileID)
 							if err != nil {
 								return err
@@ -277,43 +314,30 @@ func writeDNAR(ctx context.Context, writer io.Writer, queries *database.Queries,
 									Digest: m.hash,
 								},
 							}
-							continue
-						}
 
-						// Chunk is missing on the target. Opportunistically delta it against
-						// the whole reference file & fall back to sending it verbatim.
-						if refFileIndex != nil && m.size > 0 {
-							chunkData, err := readFileChunk(fileAbsPath, m.offset, m.size)
-							if err != nil {
-								return err
+						case deltaResults[i] != nil: // WriteOp reconstructed from a delta
+							msgChunk.ChunkType = &dnar.NarFile_ChunkDescriptor_Delta{
+								Delta: &dnar.NarFile_ChunkDescriptor_DeltaChunk{
+									Index:      addInputStoreFile(refStoreFile),
+									Size:       uint64(refStoreFile.Size),
+									Offset:     0,
+									Digest:     refStoreFile.Hash,
+									DeltaIndex: addDeltaPayload(deltaResults[i]),
+									ResultSize: uint64(m.size),
+								},
 							}
-							deltaData := refFileIndex.Diff(chunkData)
 
-							if len(deltaData) < len(chunkData) { // Delta pays off
-								msgChunk.ChunkType = &dnar.NarFile_ChunkDescriptor_Delta{
-									Delta: &dnar.NarFile_ChunkDescriptor_DeltaChunk{
-										Index:      addInputStoreFile(refStoreFile),
-										Size:       uint64(refStoreFile.Size),
-										Offset:     0,
-										Digest:     refStoreFile.Hash,
-										DeltaIndex: addDeltaPayload(deltaData),
-										ResultSize: uint64(len(chunkData)),
-									},
-								}
-								continue
+						default: // WriteOp on CA chunk
+							msgChunk.ChunkType = &dnar.NarFile_ChunkDescriptor_Ca{
+								Ca: &dnar.NarFile_ChunkDescriptor_CAChunk{
+									Index: addChunkDep(&database.Chunk{
+										FileID: storeFile.ID,
+										Hash:   m.hash,
+										Size:   m.size,
+										Offset: m.offset,
+									}),
+								},
 							}
-						}
-
-						// WriteOp on CA chunk
-						msgChunk.ChunkType = &dnar.NarFile_ChunkDescriptor_Ca{
-							Ca: &dnar.NarFile_ChunkDescriptor_CAChunk{
-								Index: addChunkDep(&database.Chunk{
-									FileID: storeFile.ID,
-									Hash:   m.hash,
-									Size:   m.size,
-									Offset: m.offset,
-								}),
-							},
 						}
 					}
 				}
