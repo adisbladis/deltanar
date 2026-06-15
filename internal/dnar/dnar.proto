@@ -41,6 +41,8 @@ message NarFile {
             FDChunk fd = 2;
             // Inline data (for very short data)
             InlineChunk inline = 3;
+            // Reconstruct from a delta against an existing base chunk
+            DeltaChunk delta = 4;
         }
 
         message CAChunk {
@@ -56,6 +58,16 @@ message NarFile {
 
         message InlineChunk {
             bytes data = 1;
+        }
+
+        // A chunk that's not present on the target but can be reconstructed from a binary delta.
+        message DeltaChunk {
+            uint64 index = 1; // File descriptor index in DnarHeader.files
+            uint64 size = 2;
+            uint64 offset = 3;
+            bytes digest = 4;
+            uint64 delta_index = 5; // CA chunk index in the chunk stream holding the delta payload
+            uint64 result_size = 6; // Size of the reconstructed chunk
         }
     }
 

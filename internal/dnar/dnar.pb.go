@@ -410,6 +410,7 @@ type NarFile_ChunkDescriptor struct {
 	//	*NarFile_ChunkDescriptor_Ca
 	//	*NarFile_ChunkDescriptor_Fd
 	//	*NarFile_ChunkDescriptor_Inline
+	//	*NarFile_ChunkDescriptor_Delta
 	ChunkType     isNarFile_ChunkDescriptor_ChunkType `protobuf_oneof:"chunk_type"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -479,6 +480,15 @@ func (x *NarFile_ChunkDescriptor) GetInline() *NarFile_ChunkDescriptor_InlineChu
 	return nil
 }
 
+func (x *NarFile_ChunkDescriptor) GetDelta() *NarFile_ChunkDescriptor_DeltaChunk {
+	if x != nil {
+		if x, ok := x.ChunkType.(*NarFile_ChunkDescriptor_Delta); ok {
+			return x.Delta
+		}
+	}
+	return nil
+}
+
 type isNarFile_ChunkDescriptor_ChunkType interface {
 	isNarFile_ChunkDescriptor_ChunkType()
 }
@@ -498,11 +508,18 @@ type NarFile_ChunkDescriptor_Inline struct {
 	Inline *NarFile_ChunkDescriptor_InlineChunk `protobuf:"bytes,3,opt,name=inline,proto3,oneof"`
 }
 
+type NarFile_ChunkDescriptor_Delta struct {
+	// Reconstruct from a delta against an existing base chunk
+	Delta *NarFile_ChunkDescriptor_DeltaChunk `protobuf:"bytes,4,opt,name=delta,proto3,oneof"`
+}
+
 func (*NarFile_ChunkDescriptor_Ca) isNarFile_ChunkDescriptor_ChunkType() {}
 
 func (*NarFile_ChunkDescriptor_Fd) isNarFile_ChunkDescriptor_ChunkType() {}
 
 func (*NarFile_ChunkDescriptor_Inline) isNarFile_ChunkDescriptor_ChunkType() {}
+
+func (*NarFile_ChunkDescriptor_Delta) isNarFile_ChunkDescriptor_ChunkType() {}
 
 type NarFile_RegularFile struct {
 	state         protoimpl.MessageState     `protogen:"open.v1"`
@@ -811,6 +828,91 @@ func (x *NarFile_ChunkDescriptor_InlineChunk) GetData() []byte {
 	return nil
 }
 
+// A chunk that's not present on the target but can be reconstructed from a binary delta.
+type NarFile_ChunkDescriptor_DeltaChunk struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Index         uint64                 `protobuf:"varint,1,opt,name=index,proto3" json:"index,omitempty"` // File descriptor index in DnarHeader.files
+	Size          uint64                 `protobuf:"varint,2,opt,name=size,proto3" json:"size,omitempty"`
+	Offset        uint64                 `protobuf:"varint,3,opt,name=offset,proto3" json:"offset,omitempty"`
+	Digest        []byte                 `protobuf:"bytes,4,opt,name=digest,proto3" json:"digest,omitempty"`
+	DeltaIndex    uint64                 `protobuf:"varint,5,opt,name=delta_index,json=deltaIndex,proto3" json:"delta_index,omitempty"` // CA chunk index in the chunk stream holding the delta payload
+	ResultSize    uint64                 `protobuf:"varint,6,opt,name=result_size,json=resultSize,proto3" json:"result_size,omitempty"` // Size of the reconstructed chunk
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *NarFile_ChunkDescriptor_DeltaChunk) Reset() {
+	*x = NarFile_ChunkDescriptor_DeltaChunk{}
+	mi := &file_dnar_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *NarFile_ChunkDescriptor_DeltaChunk) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NarFile_ChunkDescriptor_DeltaChunk) ProtoMessage() {}
+
+func (x *NarFile_ChunkDescriptor_DeltaChunk) ProtoReflect() protoreflect.Message {
+	mi := &file_dnar_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use NarFile_ChunkDescriptor_DeltaChunk.ProtoReflect.Descriptor instead.
+func (*NarFile_ChunkDescriptor_DeltaChunk) Descriptor() ([]byte, []int) {
+	return file_dnar_proto_rawDescGZIP(), []int{3, 0, 3}
+}
+
+func (x *NarFile_ChunkDescriptor_DeltaChunk) GetIndex() uint64 {
+	if x != nil {
+		return x.Index
+	}
+	return 0
+}
+
+func (x *NarFile_ChunkDescriptor_DeltaChunk) GetSize() uint64 {
+	if x != nil {
+		return x.Size
+	}
+	return 0
+}
+
+func (x *NarFile_ChunkDescriptor_DeltaChunk) GetOffset() uint64 {
+	if x != nil {
+		return x.Offset
+	}
+	return 0
+}
+
+func (x *NarFile_ChunkDescriptor_DeltaChunk) GetDigest() []byte {
+	if x != nil {
+		return x.Digest
+	}
+	return nil
+}
+
+func (x *NarFile_ChunkDescriptor_DeltaChunk) GetDeltaIndex() uint64 {
+	if x != nil {
+		return x.DeltaIndex
+	}
+	return 0
+}
+
+func (x *NarFile_ChunkDescriptor_DeltaChunk) GetResultSize() uint64 {
+	if x != nil {
+		return x.ResultSize
+	}
+	return 0
+}
+
 var File_dnar_proto protoreflect.FileDescriptor
 
 const file_dnar_proto_rawDesc = "" +
@@ -824,16 +926,17 @@ const file_dnar_proto_rawDesc = "" +
 	"store_path\x18\x01 \x01(\rR\tstorePath\x12\x12\n" +
 	"\x04path\x18\x02 \x01(\tR\x04path\"\x1d\n" +
 	"\aCAChunk\x12\x12\n" +
-	"\x04data\x18\x01 \x01(\fR\x04data\"\x9d\x06\n" +
+	"\x04data\x18\x01 \x01(\fR\x04data\"\x8a\b\n" +
 	"\aNarFile\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x125\n" +
 	"\aregular\x18\x02 \x01(\v2\x19.dnar.NarFile.RegularFileH\x00R\aregular\x12;\n" +
 	"\tdirectory\x18\x03 \x01(\v2\x1b.dnar.NarFile.DirectoryFileH\x00R\tdirectory\x125\n" +
-	"\asymlink\x18\x04 \x01(\v2\x19.dnar.NarFile.SymlinkFileH\x00R\asymlink\x1a\xff\x02\n" +
+	"\asymlink\x18\x04 \x01(\v2\x19.dnar.NarFile.SymlinkFileH\x00R\asymlink\x1a\xec\x04\n" +
 	"\x0fChunkDescriptor\x127\n" +
 	"\x02ca\x18\x01 \x01(\v2%.dnar.NarFile.ChunkDescriptor.CAChunkH\x00R\x02ca\x127\n" +
 	"\x02fd\x18\x02 \x01(\v2%.dnar.NarFile.ChunkDescriptor.FDChunkH\x00R\x02fd\x12C\n" +
-	"\x06inline\x18\x03 \x01(\v2).dnar.NarFile.ChunkDescriptor.InlineChunkH\x00R\x06inline\x1a\x1f\n" +
+	"\x06inline\x18\x03 \x01(\v2).dnar.NarFile.ChunkDescriptor.InlineChunkH\x00R\x06inline\x12@\n" +
+	"\x05delta\x18\x04 \x01(\v2(.dnar.NarFile.ChunkDescriptor.DeltaChunkH\x00R\x05delta\x1a\x1f\n" +
 	"\aCAChunk\x12\x14\n" +
 	"\x05index\x18\x01 \x01(\x04R\x05index\x1ac\n" +
 	"\aFDChunk\x12\x14\n" +
@@ -842,7 +945,17 @@ const file_dnar_proto_rawDesc = "" +
 	"\x06offset\x18\x03 \x01(\x04R\x06offset\x12\x16\n" +
 	"\x06digest\x18\x04 \x01(\fR\x06digest\x1a!\n" +
 	"\vInlineChunk\x12\x12\n" +
-	"\x04data\x18\x01 \x01(\fR\x04dataB\f\n" +
+	"\x04data\x18\x01 \x01(\fR\x04data\x1a\xa8\x01\n" +
+	"\n" +
+	"DeltaChunk\x12\x14\n" +
+	"\x05index\x18\x01 \x01(\x04R\x05index\x12\x12\n" +
+	"\x04size\x18\x02 \x01(\x04R\x04size\x12\x16\n" +
+	"\x06offset\x18\x03 \x01(\x04R\x06offset\x12\x16\n" +
+	"\x06digest\x18\x04 \x01(\fR\x06digest\x12\x1f\n" +
+	"\vdelta_index\x18\x05 \x01(\x04R\n" +
+	"deltaIndex\x12\x1f\n" +
+	"\vresult_size\x18\x06 \x01(\x04R\n" +
+	"resultSizeB\f\n" +
 	"\n" +
 	"chunk_type\x1ax\n" +
 	"\vRegularFile\x12\x12\n" +
@@ -880,7 +993,7 @@ func file_dnar_proto_rawDescGZIP() []byte {
 	return file_dnar_proto_rawDescData
 }
 
-var file_dnar_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
+var file_dnar_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
 var file_dnar_proto_goTypes = []any{
 	(*StreamHeader)(nil),                        // 0: dnar.StreamHeader
 	(*FileDescriptor)(nil),                      // 1: dnar.FileDescriptor
@@ -895,6 +1008,7 @@ var file_dnar_proto_goTypes = []any{
 	(*NarFile_ChunkDescriptor_CAChunk)(nil),     // 10: dnar.NarFile.ChunkDescriptor.CAChunk
 	(*NarFile_ChunkDescriptor_FDChunk)(nil),     // 11: dnar.NarFile.ChunkDescriptor.FDChunk
 	(*NarFile_ChunkDescriptor_InlineChunk)(nil), // 12: dnar.NarFile.ChunkDescriptor.InlineChunk
+	(*NarFile_ChunkDescriptor_DeltaChunk)(nil),  // 13: dnar.NarFile.ChunkDescriptor.DeltaChunk
 }
 var file_dnar_proto_depIdxs = []int32{
 	7,  // 0: dnar.NarFile.regular:type_name -> dnar.NarFile.RegularFile
@@ -905,12 +1019,13 @@ var file_dnar_proto_depIdxs = []int32{
 	10, // 5: dnar.NarFile.ChunkDescriptor.ca:type_name -> dnar.NarFile.ChunkDescriptor.CAChunk
 	11, // 6: dnar.NarFile.ChunkDescriptor.fd:type_name -> dnar.NarFile.ChunkDescriptor.FDChunk
 	12, // 7: dnar.NarFile.ChunkDescriptor.inline:type_name -> dnar.NarFile.ChunkDescriptor.InlineChunk
-	6,  // 8: dnar.NarFile.RegularFile.chunks:type_name -> dnar.NarFile.ChunkDescriptor
-	9,  // [9:9] is the sub-list for method output_type
-	9,  // [9:9] is the sub-list for method input_type
-	9,  // [9:9] is the sub-list for extension type_name
-	9,  // [9:9] is the sub-list for extension extendee
-	0,  // [0:9] is the sub-list for field type_name
+	13, // 8: dnar.NarFile.ChunkDescriptor.delta:type_name -> dnar.NarFile.ChunkDescriptor.DeltaChunk
+	6,  // 9: dnar.NarFile.RegularFile.chunks:type_name -> dnar.NarFile.ChunkDescriptor
+	10, // [10:10] is the sub-list for method output_type
+	10, // [10:10] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	10, // [10:10] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_dnar_proto_init() }
@@ -927,6 +1042,7 @@ func file_dnar_proto_init() {
 		(*NarFile_ChunkDescriptor_Ca)(nil),
 		(*NarFile_ChunkDescriptor_Fd)(nil),
 		(*NarFile_ChunkDescriptor_Inline)(nil),
+		(*NarFile_ChunkDescriptor_Delta)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -934,7 +1050,7 @@ func file_dnar_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_dnar_proto_rawDesc), len(file_dnar_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   13,
+			NumMessages:   14,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

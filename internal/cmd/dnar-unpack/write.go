@@ -12,7 +12,9 @@ import (
 	"github.com/nix-community/go-nix/pkg/nar"
 
 	"github.com/adisbladis/deltanar/internal/chunk_store"
+	"github.com/adisbladis/deltanar/internal/delta"
 	"github.com/adisbladis/deltanar/internal/dnar"
+	"github.com/adisbladis/deltanar/internal/mmapfile"
 )
 
 func writeUint64LE(w io.Writer, n uint64) error {
@@ -59,6 +61,29 @@ func writeNAR(
 			_ = fp.Close()
 		}
 	}()
+
+	// Delta chunks are reconstructed against a whole reference file. Map it
+	// (off the Go heap, reclaimable) and keep it for the duration of the NAR so
+	// repeated deltas against the same file map it only once.
+	inputData := make(map[string][]byte)
+	var inputUnmaps []func() error
+	defer func() {
+		for _, unmap := range inputUnmaps {
+			_ = unmap()
+		}
+	}()
+	readInputData := func(path string) ([]byte, error) {
+		if d, ok := inputData[path]; ok {
+			return d, nil
+		}
+		d, unmap, err := mmapfile.Open(path)
+		if err != nil {
+			return nil, err
+		}
+		inputData[path] = d
+		inputUnmaps = append(inputUnmaps, unmap)
+		return d, nil
+	}
 
 	for _, file := range msgNar.Files {
 		switch file.FileType.(type) {
@@ -109,6 +134,35 @@ func writeNAR(
 						return err
 					}
 					if _, err = nw.Write(chunkBuf); err != nil {
+						return err
+					}
+
+				case *dnar.NarFile_ChunkDescriptor_Delta:
+					deltaMeta := chunk.GetDelta()
+
+					// The base is a byte range of an existing reference file the
+					// target already has; the raw delta payload is carried in the
+					// chunk stream. Apply it to reconstruct the original chunk.
+					refData, err := readInputData(inputStoreFiles[deltaMeta.Index])
+					if err != nil {
+						return err
+					}
+					end := deltaMeta.Offset + deltaMeta.Size
+					if end > uint64(len(refData)) {
+						return fmt.Errorf("delta base range out of bounds")
+					}
+					base := refData[deltaMeta.Offset:end]
+
+					deltaData, err := tempChunkStore.ReadChunk(int(deltaMeta.DeltaIndex))
+					if err != nil {
+						return err
+					}
+
+					chunkData, err := delta.Patch(base, deltaData, int(deltaMeta.ResultSize))
+					if err != nil {
+						return err
+					}
+					if _, err = nw.Write(chunkData); err != nil {
 						return err
 					}
 

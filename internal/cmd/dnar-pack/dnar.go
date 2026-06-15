@@ -10,6 +10,7 @@ import (
 	"google.golang.org/protobuf/encoding/protodelim"
 
 	"github.com/adisbladis/deltanar/internal/database"
+	"github.com/adisbladis/deltanar/internal/delta"
 	"github.com/adisbladis/deltanar/internal/dnar"
 	"github.com/adisbladis/deltanar/internal/store"
 )
@@ -75,9 +76,15 @@ func writeDNAR(ctx context.Context, writer io.Writer, queries *database.Queries,
 		return uint64(i)
 	}
 
-	// Store which chunks to send over by their digest
-	var chunkDeps []*database.Chunk
-	chunkDepsMap := make(map[string]uint64) // Keep a map for quick lookup of already indexed chunks
+	// Bulk payloads (file contents), as either:
+	// - Verbatim file-backed chunk (as CA data or existing file)
+	// - Computed delta
+	type bulkPayload struct {
+		chunk *database.Chunk
+		data  []byte
+	}
+	var chunkDeps []bulkPayload
+	chunkDepsMap := make(map[string]uint64) // dedup of file-backed chunks by digest
 	addChunkDep := func(chunk *database.Chunk) uint64 {
 		other, ok := chunkDepsMap[string(chunk.Hash)]
 		if ok {
@@ -85,10 +92,71 @@ func writeDNAR(ctx context.Context, writer io.Writer, queries *database.Queries,
 		}
 
 		i := len(chunkDeps)
-		chunkDeps = append(chunkDeps, chunk)
+		chunkDeps = append(chunkDeps, bulkPayload{chunk: chunk})
 		chunkDepsMap[string(chunk.Hash)] = uint64(i)
 
 		return uint64(i)
+	}
+	addDeltaPayload := func(data []byte) uint64 {
+		i := len(chunkDeps)
+		chunkDeps = append(chunkDeps, bulkPayload{data: data})
+		return uint64(i)
+	}
+
+	// FDs for delta computation
+	deltaFDs := make(map[string]*os.File)
+	defer func() {
+		for _, fd := range deltaFDs {
+			_ = fd.Close()
+		}
+	}()
+	readFileChunk := func(path string, offset, size int64) ([]byte, error) {
+		fd, ok := deltaFDs[path]
+		if !ok {
+			f, err := os.Open(path)
+			if err != nil {
+				return nil, err
+			}
+			deltaFDs[path] = f
+			fd = f
+		}
+		buf := make([]byte, size)
+		if _, err := fd.ReadAt(buf, offset); err != nil {
+			return nil, err
+		}
+		return buf, nil
+	}
+
+	// Cache of store path strings for resolving file paths & picking delta base chunks.
+	storePathStrByID := make(map[int64]string)
+	getStorePathStr := func(id int64) (string, error) {
+		if s, ok := storePathStrByID[id]; ok {
+			return s, nil
+		}
+		sp, err := queries.GetStorePathByID(ctx, id)
+		if err != nil {
+			return "", err
+		}
+		storePathStrByID[id] = sp.Path
+		return sp.Path, nil
+	}
+	storeFileAbsPath := func(storePath, filePath string) string {
+		if filePath == "/" {
+			return storePath
+		}
+		return storePath + filePath
+	}
+
+	// Match index over the current reference file's contents, reused for every
+	// missing chunk (see refIndexCache).
+	refCache := newRefIndexCache()
+	defer refCache.close()
+	getRefIndex := func(file *database.Storefile) (*delta.Index, error) {
+		storePath, err := getStorePathStr(file.StorePathID)
+		if err != nil {
+			return nil, err
+		}
+		return refCache.get(storeFileAbsPath(storePath, file.Path), file.ID)
 	}
 
 	// Send NAR stream header
@@ -170,13 +238,49 @@ func writeDNAR(ctx context.Context, writer io.Writer, queries *database.Queries,
 
 					meta.Chunks = make([]*dnar.NarFile_ChunkDescriptor, len(chunks))
 
+					// Resolve the most "popular" file, referenced by the most chunks & use
+					// that as the reference for computing delta.
+					localChunkFor := make([]*database.Chunk, len(chunks))
+					refFileVotes := make(map[int64]int)
+					for i, chunk := range chunks {
+						if localChunks, ok := localStoreChunksByDigest[string(chunk.Hash)]; ok {
+							localChunkFor[i] = localChunks[0]
+							refFileVotes[localChunks[0].FileID]++
+						}
+					}
+
+					// Use the most popular file for computing delta.
+					var (
+						refStoreFile *database.Storefile
+						refFileIndex *delta.Index
+					)
+					if len(refFileVotes) > 0 {
+						var refFileID int64
+						bestVotes := -1
+						for fileID, votes := range refFileVotes {
+							if votes > bestVotes {
+								bestVotes, refFileID = votes, fileID
+							}
+						}
+
+						sizeCap := storeFile.Size * refSizeFactor
+						if sizeCap < refSizeFloor {
+							sizeCap = refSizeFloor
+						}
+						if f := localStoreFilesByID[refFileID]; f != nil && f.Size > 0 && f.Size <= sizeCap {
+							if idx, err := getRefIndex(f); err == nil {
+								refStoreFile, refFileIndex = f, idx
+							}
+						}
+					}
+
+					fileAbsPath := storeFileAbsPath(storePath, storeFile.Path)
+
 					for i, chunk := range chunks {
 						msgChunk := &dnar.NarFile_ChunkDescriptor{}
 						meta.Chunks[i] = msgChunk
 
-						localChunks, ok := localStoreChunksByDigest[string(chunk.Hash)]
-						if ok { // WriteOp on the chunk range
-							localChunk := localChunks[0]
+						if localChunk := localChunkFor[i]; localChunk != nil { // WriteOp on the chunk range
 							localStoreFile := localStoreFilesByID[localChunk.FileID]
 
 							msgChunk.ChunkType = &dnar.NarFile_ChunkDescriptor_Fd{
@@ -187,12 +291,38 @@ func writeDNAR(ctx context.Context, writer io.Writer, queries *database.Queries,
 									Digest: chunk.Hash,
 								},
 							}
-						} else { // WriteOp on CA chunk
-							msgChunk.ChunkType = &dnar.NarFile_ChunkDescriptor_Ca{
-								Ca: &dnar.NarFile_ChunkDescriptor_CAChunk{
-									Index: addChunkDep(&chunk),
-								},
+							continue
+						}
+
+						// Chunk is missing on the target. Opportunistically delta it against
+						// the whole reference file & fall back to sending it verbatim.
+						if refFileIndex != nil && chunk.Size > 0 {
+							chunkData, err := readFileChunk(fileAbsPath, chunk.Offset, chunk.Size)
+							if err != nil {
+								return err
 							}
+							deltaData := refFileIndex.Diff(chunkData)
+
+							if len(deltaData) < len(chunkData) { // Delta pays off
+								msgChunk.ChunkType = &dnar.NarFile_ChunkDescriptor_Delta{
+									Delta: &dnar.NarFile_ChunkDescriptor_DeltaChunk{
+										Index:      addInputStoreFile(refStoreFile),
+										Size:       uint64(refStoreFile.Size),
+										Offset:     0,
+										Digest:     refStoreFile.Hash,
+										DeltaIndex: addDeltaPayload(deltaData),
+										ResultSize: uint64(len(chunkData)),
+									},
+								}
+								continue
+							}
+						}
+
+						// WriteOp on CA chunk
+						msgChunk.ChunkType = &dnar.NarFile_ChunkDescriptor_Ca{
+							Ca: &dnar.NarFile_ChunkDescriptor_CAChunk{
+								Index: addChunkDep(&chunk),
+							},
 						}
 					}
 				}
@@ -234,12 +364,21 @@ func writeDNAR(ctx context.Context, writer io.Writer, queries *database.Queries,
 		return err
 	}
 
-	// Write CA chunks
+	// Write the chunk stream (verbatim CA chunks + delta payloads)
 	// Note: Wrapped in a func so the fds map can be cleaned up with defer as early as possible
 	err := func() error {
 		fds := make(map[int64]*os.File)
 
-		for _, chunk := range chunkDeps {
+		for _, payload := range chunkDeps {
+			// Precomputed payload (delta)
+			if payload.chunk == nil {
+				if _, err := protodelim.MarshalTo(writer, &dnar.CAChunk{Data: payload.data}); err != nil {
+					return err
+				}
+				continue
+			}
+
+			chunk := payload.chunk
 			fd, ok := fds[chunk.FileID]
 			if !ok {
 				dbFile, err := queries.GetStoreFileByID(ctx, chunk.FileID)
