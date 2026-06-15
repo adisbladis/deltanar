@@ -6,8 +6,9 @@ DeltaNAR tries to achieve maximum deduplication by doing multiple levels of anal
 
 Individual files in the Nix store are chunked using a [content defined chunker](https://en.wikipedia.org/wiki/Chunking_(computing)#In_data_deduplication,_data_synchronization_and_remote_data_compression).
 
-Files are transferred by transferring a list of content addressed chunks.
-    If a sub-file chunk already exists in the target Nix store (even in another store path), it will be taken from the existing chunk, completely avoiding re-sending the data.
+A file is then transferred as a list of chunks. If a sub-file chunk already exists in the target Nix store (even in another store path), it is taken from the existing chunk, completely avoiding re-sending the data.
+
+A chunk the target is missing is sent as content addressed data, or — when a similar file is already present — as a [binary delta](./delta.md) against it.
 
 ## File
 

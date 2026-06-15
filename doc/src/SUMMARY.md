@@ -10,6 +10,7 @@
 # Method
 
 - [Deduplication](./method/dedup.md)
+- [Delta compression](./method/delta.md)
 - [DNAR format](./method/dnar.md)
 
 # Meta
