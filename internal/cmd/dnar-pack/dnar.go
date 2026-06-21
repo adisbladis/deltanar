@@ -281,7 +281,11 @@ func writeDNAR(ctx context.Context, writer io.Writer, queries *database.Queries,
 								if _, err := fp.ReadAt(chunkData, m.offset); err != nil {
 									return err
 								}
-								if d := refFileIndex.Diff(chunkData); len(d) < len(chunkData) {
+								d, err := refFileIndex.Diff(chunkData)
+								if err != nil {
+									return err
+								}
+								if len(d) < len(chunkData) {
 									deltaResults[i] = d // delta pays off
 								}
 								return nil

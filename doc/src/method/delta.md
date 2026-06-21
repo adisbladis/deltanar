@@ -1,6 +1,10 @@
 # Delta compression
 
-[Deduplication](./dedup.md) reuses content the target already has *byte for byte*. But a file that changed between two closures is often only slightly different from one the target already has — a recompiled binary, a patched script. DeltaNAR exploits this with opportunistic binary delta compression: a chunk the target is missing can be reconstructed from a similar file it already has, so only the difference needs to be sent.
+[Deduplication](./dedup.md) reuses content the target already has *byte for byte*.
+
+But a file that changed between two closures is often only slightly different from one the target already has.
+
+DeltaNAR exploits this with opportunistic binary delta compression: a chunk the target is missing can be reconstructed from a similar file it already has, so only the difference needs to be sent.
 
 This happens per chunk, as a fallback for the chunks that did not match exactly while a file is packed.
 

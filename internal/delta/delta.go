@@ -9,6 +9,9 @@ package delta
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
+
+	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -25,34 +28,6 @@ const (
 	minIndexBits = 12
 	maxIndexBits = 23
 )
-
-// A delta is a stream of tokens. Each token is a uvarint whose lowest bit
-// selects the operation and whose remaining bits carry a length:
-//
-//	COPY:   length<<opBits | opCopy     followed by a uvarint offset into the base
-//	INSERT: length<<opBits | opInsert   followed by `length` literal bytes
-const (
-	opBits   = 1             // width of the operation tag
-	opMask   = 1<<opBits - 1 // selects the operation tag
-	opCopy   = 0
-	opInsert = 1
-)
-
-func copyToken(length int) uint64 {
-	return uint64(length)<<opBits | opCopy
-}
-
-func insertToken(length int) uint64 {
-	return uint64(length)<<opBits | opInsert
-}
-
-func tokenOp(tok uint64) uint64 {
-	return tok & opMask
-}
-
-func tokenLen(tok uint64) int {
-	return int(tok >> opBits)
-}
 
 type Index struct {
 	base  []byte
@@ -87,20 +62,19 @@ func (ix *Index) hash(b []byte) uint32 {
 	return (binary.LittleEndian.Uint32(b) * knuthPrime) >> ix.shift
 }
 
-// Return delta from target
-func (ix *Index) Diff(target []byte) []byte {
+// Diff returns a serialised Delta that reconstructs target from the index's base.
+func (ix *Index) Diff(target []byte) ([]byte, error) {
 	base := ix.base
-	// Optimistic capacity
-	// delta is usually < half the target.
-	out := make([]byte, 0, len(target)/2+16)
+	d := &Delta{}
 
 	litStart := 0
 	emitLiteral := func(end int) {
 		if end <= litStart {
 			return
 		}
-		out = appendUvarint(out, insertToken(end-litStart))
-		out = append(out, target[litStart:end]...)
+		d.Ops = append(d.Ops, &Delta_Op{
+			Op: &Delta_Op_Insert{Insert: target[litStart:end]},
+		})
 	}
 
 	i := 0
@@ -118,8 +92,12 @@ func (ix *Index) Diff(target []byte) []byte {
 					length++
 				}
 				emitLiteral(tpos)
-				out = appendUvarint(out, copyToken(length))
-				out = appendUvarint(out, uint64(bpos))
+				d.Ops = append(d.Ops, &Delta_Op{
+					Op: &Delta_Op_Copy{Copy: &Delta_Copy{
+						Offset: uint64(bpos),
+						Length: uint64(length),
+					}},
+				})
 				i = tpos + length
 				litStart = i
 				continue
@@ -129,54 +107,50 @@ func (ix *Index) Diff(target []byte) []byte {
 	}
 	emitLiteral(len(target))
 
-	return out
+	return proto.Marshal(d)
 }
 
-func Diff(base, target []byte) []byte {
+// Diff returns a serialised Delta that reconstructs target from base.
+func Diff(base, target []byte) ([]byte, error) {
 	return NewIndex(base).Diff(target)
 }
 
-func Patch(base, delta []byte, resultSize int) ([]byte, error) {
+// Patch reconstructs the original chunk by applying the serialised Delta to base.
+func Patch(base, deltaBytes []byte, resultSize int) ([]byte, error) {
 	if resultSize < 0 {
 		return nil, errors.New("delta: negative result size")
 	}
+
+	var d Delta
+	if err := proto.Unmarshal(deltaBytes, &d); err != nil {
+		return nil, fmt.Errorf("delta: malformed delta: %w", err)
+	}
+
 	out := make([]byte, 0, resultSize)
-
-	p := 0
-	for p < len(delta) {
-		tok, n := binary.Uvarint(delta[p:])
-		if n <= 0 {
-			return nil, errors.New("delta: malformed token header")
-		}
-		p += n
-
-		length := tokenLen(tok)
-		if length <= 0 {
-			return nil, errors.New("delta: invalid token length")
-		}
-		if len(out)+length > resultSize {
-			return nil, errors.New("delta: output exceeds result size")
-		}
-
-		switch tokenOp(tok) {
-		case opInsert:
-			if p+length > len(delta) {
-				return nil, errors.New("delta: literal out of bounds")
+	for _, op := range d.Ops {
+		switch op := op.Op.(type) {
+		case *Delta_Op_Insert:
+			if len(out)+len(op.Insert) > resultSize {
+				return nil, errors.New("delta: output exceeds result size")
 			}
-			out = append(out, delta[p:p+length]...)
-			p += length
+			out = append(out, op.Insert...)
 
-		case opCopy:
-			off, n2 := binary.Uvarint(delta[p:])
-			if n2 <= 0 {
-				return nil, errors.New("delta: malformed copy offset")
+		case *Delta_Op_Copy:
+			length := int(op.Copy.Length)
+			if length <= 0 {
+				return nil, errors.New("delta: invalid copy length")
 			}
-			p += n2
-			o := int(off)
-			if o > len(base) || o+length > len(base) {
+			off := int(op.Copy.Offset)
+			if off < 0 || off+length > len(base) {
 				return nil, errors.New("delta: copy out of bounds")
 			}
-			out = append(out, base[o:o+length]...)
+			if len(out)+length > resultSize {
+				return nil, errors.New("delta: output exceeds result size")
+			}
+			out = append(out, base[off:off+length]...)
+
+		default:
+			return nil, errors.New("delta: unknown op")
 		}
 	}
 
@@ -185,12 +159,6 @@ func Patch(base, delta []byte, resultSize int) ([]byte, error) {
 	}
 
 	return out, nil
-}
-
-func appendUvarint(b []byte, v uint64) []byte {
-	var tmp [binary.MaxVarintLen64]byte
-	n := binary.PutUvarint(tmp[:], v)
-	return append(b, tmp[:n]...)
 }
 
 func matchLen(a []byte, ai int, b []byte, bi int) int {
