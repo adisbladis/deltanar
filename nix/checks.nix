@@ -11,10 +11,12 @@ let
   src = ../.;
 
   directoryBase = runCommand "dnar-directory-base" { } ''
-    mkdir -p $out/links $out/meta $out/empty
+    mkdir -p $out/links $out/ruamel $out/meta $out/empty
     printf 'old\n' > $out/links/old
     printf 'new\n' > $out/links/new
     ln -s old $out/links/current
+    printf 'unchanged\n' > $out/ruamel/module
+    printf 'must not be skipped\n' > $out/ruamel.yaml.dist-info
     printf 'executable contents\n' > $out/meta/program
     touch $out/REQUESTED
   '';
