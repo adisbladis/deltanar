@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"io/fs"
@@ -182,6 +183,9 @@ func ReadStorePath(ctx context.Context, storePath string) ([]*StoreFile, error) 
 				return nil, fmt.Errorf("error reading symlink target: %w", err)
 			}
 
+			d := blake3.Sum256([]byte(linkTarget))
+			digest = d[:]
+
 		case fs.ModeDir:
 			fileType = TypeDirectory
 
@@ -190,35 +194,34 @@ func ReadStorePath(ctx context.Context, storePath string) ([]*StoreFile, error) 
 				return nil, err
 			}
 
+			h := blake3.New()
 			for _, entry := range entries {
-				ss, err := readPath(filepath.Join(path, entry.Name()))
+				childFiles, err := readPath(filepath.Join(path, entry.Name()))
 				if err != nil {
 					return nil, err
 				}
-				dirStoreFiles = append(dirStoreFiles, ss...)
-			}
-
-			// Compute a digest of the whole directory
-			{
-				h := blake3.New()
-
-				for _, dirStoreFile := range dirStoreFiles {
-					if _, err := h.Write([]byte(dirStoreFile.Path)); err != nil {
-						return nil, err
-					}
-
-					if _, err := h.Write(dirStoreFile.Digest); err != nil {
-						return nil, err
-					}
-				}
-
-				d := make([]byte, DigestLen)
-				if _, err = h.Digest().Read(d); err != nil {
+				child := childFiles[0]
+				var nameLen [8]byte
+				binary.LittleEndian.PutUint64(nameLen[:], uint64(len(entry.Name())))
+				if _, err := h.Write(nameLen[:]); err != nil {
 					return nil, err
 				}
-
-				digest = d
+				if _, err := h.Write([]byte(entry.Name())); err != nil {
+					return nil, err
+				}
+				var executable byte
+				if child.Type == TypeRegular && child.Executable {
+					executable = 1
+				}
+				if _, err := h.Write([]byte{byte(child.Type), executable}); err != nil {
+					return nil, err
+				}
+				if _, err := h.Write(child.Digest); err != nil {
+					return nil, err
+				}
+				dirStoreFiles = append(dirStoreFiles, childFiles...)
 			}
+			digest = h.Sum(nil)
 
 		default:
 			if mode.Type().IsRegular() {

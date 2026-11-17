@@ -24,10 +24,10 @@ SELECT * FROM StoreFile WHERE id = ?;
 
 -- name: GetLocalFileByHash :one
 -- A store file the target already has (on one of local_paths) with the given
--- content hash, for whole-file and directory matching.
+-- content hash and entry type, for whole-file and directory matching.
 SELECT file.* FROM StoreFile file
 JOIN StorePath path ON path.id = file.store_path_id
-WHERE file.hash = ? AND path.path IN (sqlc.slice('local_paths'))
+WHERE file.hash = ? AND file.type = ? AND path.path IN (sqlc.slice('local_paths'))
 LIMIT 1;
 
 -- name: GetStoreChunksWithLocalMatch :many

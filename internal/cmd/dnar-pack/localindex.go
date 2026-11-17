@@ -60,9 +60,10 @@ func (li *localIndex) fileChunks(ctx context.Context, fileID int64) ([]matchedCh
 	return out, nil
 }
 
-func (li *localIndex) fileByHash(ctx context.Context, hash []byte) (*database.Storefile, error) {
+func (li *localIndex) fileByHash(ctx context.Context, hash []byte, fileType int64) (*database.Storefile, error) {
 	f, err := li.queries.GetLocalFileByHash(ctx, database.GetLocalFileByHashParams{
 		Hash:       hash,
+		Type:       fileType,
 		LocalPaths: li.localPaths,
 	})
 	switch {

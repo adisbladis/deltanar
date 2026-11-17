@@ -175,12 +175,13 @@ func writeDNAR(ctx context.Context, writer io.Writer, queries *database.Queries,
 		// If a directory was matched in-full we can skip writing the individual files
 		//  from it to the delta.
 		//
-		// Keep a reference of the last directory that is already matched in-full so the files from it can be skipped.
-		recursiveDir := ""
+		// Keep a slash terminated prefix so copying /<name> does not skip
+		// siblings such as /<name>.yaml.
+		recursiveDirPrefix := ""
 
 	STOREFILE_LOOP:
 		for _, storeFile := range storeFiles {
-			if recursiveDir != "" && strings.HasPrefix(storeFile.Path, recursiveDir) {
+			if recursiveDirPrefix != "" && strings.HasPrefix(storeFile.Path, recursiveDirPrefix) {
 				continue STOREFILE_LOOP
 			}
 
@@ -201,7 +202,7 @@ func writeDNAR(ctx context.Context, writer io.Writer, queries *database.Queries,
 				}
 
 				// Check if target host already has file by hash
-				existingFile, err := li.fileByHash(ctx, storeFile.Hash)
+				existingFile, err := li.fileByHash(ctx, storeFile.Hash, storeFile.Type)
 				if err != nil {
 					return err
 				}
@@ -347,12 +348,12 @@ func writeDNAR(ctx context.Context, writer io.Writer, queries *database.Queries,
 				var from int64 = -1
 
 				// Check for exact dir hash match
-				existingDir, err := li.fileByHash(ctx, storeFile.Hash)
+				existingDir, err := li.fileByHash(ctx, storeFile.Hash, storeFile.Type)
 				if err != nil {
 					return err
 				}
 				if existingDir != nil {
-					recursiveDir = storeFile.Path
+					recursiveDirPrefix = strings.TrimSuffix(storeFile.Path, "/") + "/"
 					from = int64(addInputStoreFile(existingDir))
 				}
 
