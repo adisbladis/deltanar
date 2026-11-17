@@ -65,21 +65,23 @@ func (q *Queries) CreateStorePath(ctx context.Context, path string) (Storepath, 
 const getLocalFileByHash = `-- name: GetLocalFileByHash :one
 SELECT file.id, file.store_path_id, file.path, file.size, file.type, file.link_target, file.executable, file.hash FROM StoreFile file
 JOIN StorePath path ON path.id = file.store_path_id
-WHERE file.hash = ? AND path.path IN (/*SLICE:local_paths*/?)
+WHERE file.hash = ? AND file.type = ? AND path.path IN (/*SLICE:local_paths*/?)
 LIMIT 1
 `
 
 type GetLocalFileByHashParams struct {
 	Hash       []byte
+	Type       int64
 	LocalPaths []string
 }
 
 // A store file the target already has (on one of local_paths) with the given
-// content hash, for whole-file and directory matching.
+// content hash and entry type, for whole-file and directory matching.
 func (q *Queries) GetLocalFileByHash(ctx context.Context, arg GetLocalFileByHashParams) (Storefile, error) {
 	query := getLocalFileByHash
 	var queryParams []interface{}
 	queryParams = append(queryParams, arg.Hash)
+	queryParams = append(queryParams, arg.Type)
 	if len(arg.LocalPaths) > 0 {
 		for _, v := range arg.LocalPaths {
 			queryParams = append(queryParams, v)

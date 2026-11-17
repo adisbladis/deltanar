@@ -201,7 +201,7 @@ func writeDNAR(ctx context.Context, writer io.Writer, queries *database.Queries,
 				}
 
 				// Check if target host already has file by hash
-				existingFile, err := li.fileByHash(ctx, storeFile.Hash)
+				existingFile, err := li.fileByHash(ctx, storeFile.Hash, storeFile.Type)
 				if err != nil {
 					return err
 				}
@@ -347,7 +347,7 @@ func writeDNAR(ctx context.Context, writer io.Writer, queries *database.Queries,
 				var from int64 = -1
 
 				// Check for exact dir hash match
-				existingDir, err := li.fileByHash(ctx, storeFile.Hash)
+				existingDir, err := li.fileByHash(ctx, storeFile.Hash, storeFile.Type)
 				if err != nil {
 					return err
 				}

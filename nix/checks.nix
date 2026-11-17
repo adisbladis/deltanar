@@ -1,30 +1,43 @@
 {
   runCommand,
   nix,
-  callPackage,
   python3Packages,
   closureInfo,
   pack,
   unpack,
   go,
-  golangci-lint,
 }:
 let
   src = ../.;
+
+  directoryBase = runCommand "dnar-directory-base" { } ''
+    mkdir -p $out/links $out/meta $out/empty
+    printf 'old\n' > $out/links/old
+    printf 'new\n' > $out/links/new
+    ln -s old $out/links/current
+    printf 'executable contents\n' > $out/meta/program
+    touch $out/REQUESTED
+  '';
+  directoryTarget = runCommand "dnar-directory-target" { } ''
+    mkdir -p $out
+    cp -a ${directoryBase}/. $out/
+    chmod -R u+w $out
+    rm $out/links/current
+    ln -s new $out/links/current
+    chmod +x $out/meta/program
+  '';
 
   mkE2eCheck =
     {
       name,
       unpackCmd,
-    }:
-    let
-      requestsA = python3Packages.requests;
-      requestsB = python3Packages.requests.overrideAttrs (old: {
+      requestsA ? python3Packages.requests,
+      requestsB ? python3Packages.requests.overrideAttrs (old: {
         doCheck = false;
         doInstallCheck = false;
         __invalidateHash = true; # Arbitrary attribute to break hash with requestsA
-      });
-    in
+      }),
+    }:
     runCommand "dnar-e2e-${name}"
       {
         nativeBuildInputs = [
@@ -64,6 +77,9 @@ let
 
         # Assert unpack was successful
         test -e store-b/${requestsB}
+        nix-store --dump ${requestsB} > expected.nar
+        nix-store --dump store-b/${requestsB} > actual.nar
+        cmp expected.nar actual.nar
 
         touch $out
       '';
@@ -92,6 +108,25 @@ in
 
   e2e-nix-store-export = mkE2eCheck {
     name = "nix-store-export";
+    unpackCmd = ''
+      dnar-unpack nix-store-export | nix-store --import
+    '';
+  };
+
+  e2e-directories-binary-cache = mkE2eCheck {
+    name = "directories-binary-cache";
+    requestsA = directoryBase;
+    requestsB = directoryTarget;
+    unpackCmd = ''
+      dnar-unpack binary-cache --cache binary-cache
+      nix --extra-experimental-features nix-command copy --from file://$(readlink -f binary-cache) --all --no-check-sigs
+    '';
+  };
+
+  e2e-directories-nix-store-export = mkE2eCheck {
+    name = "directories-nix-store-export";
+    requestsA = directoryBase;
+    requestsB = directoryTarget;
     unpackCmd = ''
       dnar-unpack nix-store-export | nix-store --import
     '';
